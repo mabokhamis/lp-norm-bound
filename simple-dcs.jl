@@ -271,9 +271,11 @@ function add_flow_constraints!(
         end
         for (i, dc) ∈ enumerate(dcs)
             p_i = dc_coefficient_name(i)
-            c_X_Y = flow_capacity_name(t, dc.X, dc.Y)
-            add_to_constraint!(lp, c_X_Y, p_i, 1.0)
-            if !isinf(dc.p)
+            if dc.X != dc.Y
+                c_X_Y = flow_capacity_name(t, dc.X, dc.Y)
+                add_to_constraint!(lp, c_X_Y, p_i, 1.0)
+            end
+            if !isinf(dc.p) && !isempty(dc.X)
                 c__X = flow_capacity_name(t, Set{T}(), dc.X)
                 add_to_constraint!(lp, c__X, p_i, 1.0 / dc.p)
             end
@@ -294,6 +296,7 @@ function simple_dc_bound(dcs::Vector{DC{T}}, vars::Vector{T}) where T
     add_flow_constraints!(lp, dcs, vars, vertices, edges)
     set_objective!(lp, dcs)
     model = to_jump(lp)
+    println(model)
     optimize!(model)
     @assert termination_status(model) == MathOptInterface.OPTIMAL
     return objective_value(model)
@@ -302,9 +305,9 @@ end
 ###########################################################################################
 
 dcs = [
-    DC(Symbol[], [:A, :B], Inf, 1),
-    DC(Symbol[], [:A, :C], Inf, 1),
-    DC(Symbol[], [:B, :C], Inf, 1),
+    DC(Symbol[], [:A, :B], 1, 1),
+    DC(Symbol[], [:A, :C], 1, 1),
+    DC(Symbol[], [:B, :C], 1, 1),
 ]
 
 vars = [:A, :B, :C]
