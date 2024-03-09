@@ -135,7 +135,11 @@ function to_jump(lp::LP)
         to_jump(model, con, var_map)
     end
     to_jump(model, lp.objective, var_map)
-    return model
+    return (model, var_map)
+end
+
+function get_values(var_map::Dict{Symbol,VariableRef})
+    return SortedDict{Symbol,Float64}(name => value(v) for (name, v) ∈ var_map)
 end
 
 ###########################################################################################
@@ -295,10 +299,14 @@ function simple_dc_bound(dcs::Vector{DC{T}}, vars::Vector{T}) where T
     (vertices, edges) = _collect_vertices_and_edges(dcs, vars)
     add_flow_constraints!(lp, dcs, vars, vertices, edges)
     set_objective!(lp, dcs)
-    model = to_jump(lp)
+    (model, var_map) = to_jump(lp)
     println(model)
     optimize!(model)
     @assert termination_status(model) == MathOptInterface.OPTIMAL
+    values = get_values(var_map)
+    for (x, v) ∈ values
+        println("$x = $v")
+    end
     return objective_value(model)
 end
 
