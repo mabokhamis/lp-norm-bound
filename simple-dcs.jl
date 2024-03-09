@@ -262,7 +262,7 @@ function add_flow_constraints!(
         end
         for (X, Y) ∈ edges
             f_X_Y = flow_var_name(t, X, Y)
-            add_variable!(lp, f_X_Y, -Inf, Inf)
+            add_variable!(lp, f_X_Y, X ⊆ Y ? -Inf : 0.0, Inf)
             e_X = flow_conservation_name(t, X)
             e_Y = flow_conservation_name(t, Y)
             add_to_constraint!(lp, e_X, f_X_Y, -1.0)
@@ -312,10 +312,30 @@ end
 
 ###########################################################################################
 
+# dcs = [
+#     DC(Symbol[], [:A, :B], 1, 1),
+#     DC(Symbol[], [:A, :C], 1, 1),
+#     DC(Symbol[], [:B, :C], 1, 1),
+# ]
+
+# vars = [:A, :B, :C]
+
+# println(simple_dc_bound(dcs, vars))
+
+# dcs = [
+#     DC(Symbol[], [:A, :B], Inf, 1),
+#     DC(Symbol[], [:A, :C], Inf, 1),
+#     DC(Symbol[], [:B, :C], Inf, 1),
+# ]
+
+# vars = [:A, :B, :C]
+
+# println(simple_dc_bound(dcs, vars))
+
 dcs = [
-    DC(Symbol[], [:A, :B], 1, 1),
-    DC(Symbol[], [:A, :C], 1, 1),
-    DC(Symbol[], [:B, :C], 1, 1),
+    DC(Symbol[:A], [:B], 2, 1),
+    DC(Symbol[:B], [:C], 2, 1),
+    DC(Symbol[:C], [:A], 2, 1),
 ]
 
 vars = [:A, :B, :C]
