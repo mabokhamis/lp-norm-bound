@@ -52,11 +52,9 @@ function add_variable!(lp::LP, name::Symbol, lower_bound::Float64, upper_bound::
     return lp.variables[name] = Variable(name, lower_bound, upper_bound)
 end
 
-function add_constraint!(
-    lp::LP, name::Symbol, lower_bound::Float64, upper_bound::Float64, sum::Sum = Sum()
-)
+function add_constraint!(lp::LP, name::Symbol, lower_bound::Float64, upper_bound::Float64)
     @assert !haskey(lp.constraints, name)
-    return lp.constraints[name] = Constraint(name, lower_bound, upper_bound, sum)
+    return lp.constraints[name] = Constraint(name, lower_bound, upper_bound, Sum())
 end
 
 function add_to_constraint!(
@@ -72,6 +70,7 @@ function add_to_constraint!(
 end
 
 function add_to_objective!(lp::LP, variable::Symbol, coefficient::Float64)
+    @assert haskey(lp.variables, variable)
     if haskey(lp.objective.sum, variable)
         lp.objective.sum[variable] += coefficient
     else
@@ -141,27 +140,27 @@ end
 
 ###########################################################################################
 
-lp = LP(true)
-add_variable!(lp, :x, 0.0, 1.0)
-add_variable!(lp, :y, 0.0, Inf)
-add_variable!(lp, :z, 0.0, Inf)
-add_constraint!(lp, :xy, -Inf, 1.0)
-add_to_constraint!(lp, :xy, :x, 1.0)
-add_to_constraint!(lp, :xy, :y, 1.0)
-add_constraint!(lp, :yz, -Inf, 1.0)
-add_to_constraint!(lp, :yz, :y, 1.0)
-add_to_constraint!(lp, :yz, :z, 1.0)
-add_constraint!(lp, :xz, -Inf, 1.0)
-add_to_constraint!(lp, :xz, :x, 1.0)
-add_to_constraint!(lp, :xz, :z, 1.0)
-add_to_objective!(lp, :x, 1.0)
-add_to_objective!(lp, :y, 1.0)
-add_to_objective!(lp, :z, 1.0)
-model = to_jump(lp)
-println(model)
-optimize!(model)
-@assert termination_status(model) == MathOptInterface.OPTIMAL
-println(objective_value(model))
+# lp = LP(true)
+# add_variable!(lp, :x, 0.0, 1.0)
+# add_variable!(lp, :y, 0.0, Inf)
+# add_variable!(lp, :z, 0.0, Inf)
+# add_constraint!(lp, :xy, -Inf, 1.0)
+# add_to_constraint!(lp, :xy, :x, 1.0)
+# add_to_constraint!(lp, :xy, :y, 1.0)
+# add_constraint!(lp, :yz, -Inf, 1.0)
+# add_to_constraint!(lp, :yz, :y, 1.0)
+# add_to_constraint!(lp, :yz, :z, 1.0)
+# add_constraint!(lp, :xz, -Inf, 1.0)
+# add_to_constraint!(lp, :xz, :x, 1.0)
+# add_to_constraint!(lp, :xz, :z, 1.0)
+# add_to_objective!(lp, :x, 1.0)
+# add_to_objective!(lp, :y, 1.0)
+# add_to_objective!(lp, :z, 1.0)
+# model = to_jump(lp)
+# println(model)
+# optimize!(model)
+# @assert termination_status(model) == MathOptInterface.OPTIMAL
+# println(objective_value(model))
 
 
 ###########################################################################################
@@ -188,28 +187,128 @@ function _name(X::Set{T}) where T
 end
 
 function flow_var_name(t::Int, X::Set{T}, Y::Set{T}) where T
-    return Symbol("f$t_$(_name(X))_$(_name(Y))")
+    return Symbol("f$(t)_$(_name(X))_$(_name(Y))")
 end
 
-function flow_con_name(t::Int, Z::Set{T}) where T
-    return Symbol("e$t_$(_name(Z))")
+function flow_capacity_name(t::Int, X::Set{T}, Y::Set{T}) where T
+    return Symbol("c$(t)_$(_name(X))_$(_name(Y))")
+end
+
+function flow_conservation_name(t::Int, Z::Set{T}) where T
+    return Symbol("e$(t)_$(_name(Z))")
 end
 
 function dc_coefficient_name(i::Int)
     return Symbol("p_$i")
 end
 
+function _collect_vertices_and_edges(dcs::Vector{DC{T}}, vars::Vector{T}) where T
+    vertices = Set{Set{T}}()
+    edges = Set{Tuple{Set{T},Set{T}}}()
+
+    function _add_edge(X::Set{T}, Y::Set{T})
+        @assert X ⊆ Y || Y ⊆ X
+        push!(vertices, X)
+        push!(vertices, Y)
+        X != Y && (Y, X) ∉ edges && push!(edges, (X, Y))
+    end
+
+    push!(vertices, Set{T}())
+    for v ∈ vars
+        push!(vertices, Set{T}((v,)))
+    end
+
+    for dc ∈ dcs
+        _add_edge(dc.X, dc.Y)
+        !isinf(dc.p) && _add_edge(Set{T}(), dc.X)
+    end
+
+    for dc ∈ dcs
+        _add_edge(dc.Y, Set{T}())
+        for y ∈ dc.Y
+            _add_edge(dc.Y, Set{T}((y,)))
+        end
+    end
+
+    return (vertices, edges)
+end
+
+function add_flow_constraints!(
+    lp::LP,
+    dcs::Vector{DC{T}},
+    vars::Vector{T},
+    vertices::Set{Set{T}},
+    edges::Set{Tuple{Set{T},Set{T}}}
+) where T
+    for i ∈ eachindex(dcs)
+        add_variable!(lp, dc_coefficient_name(i), 0.0, Inf)
+    end
+    for (t, v) ∈ enumerate(vars)
+        for Z ∈ vertices
+            e_Z = flow_conservation_name(t, Z)
+            @assert Z isa Set{T}
+            n_Z = if Z == Set{T}((v,))
+                1.0
+            elseif isempty(Z)
+                -1.0
+            else
+                0.0
+            end
+            add_constraint!(lp, e_Z, n_Z, Inf)
+        end
+        for (X, Y) ∈ edges
+            f_X_Y = flow_var_name(t, X, Y)
+            add_variable!(lp, f_X_Y, -Inf, Inf)
+            e_X = flow_conservation_name(t, X)
+            e_Y = flow_conservation_name(t, Y)
+            add_to_constraint!(lp, e_X, f_X_Y, -1.0)
+            add_to_constraint!(lp, e_Y, f_X_Y, +1.0)
+            if X ⊆ Y
+                c_X_Y = flow_capacity_name(t, X, Y)
+                add_constraint!(lp, c_X_Y, 0.0, Inf)
+                add_to_constraint!(lp, c_X_Y, f_X_Y, -1.0)
+            end
+        end
+        for (i, dc) ∈ enumerate(dcs)
+            p_i = dc_coefficient_name(i)
+            c_X_Y = flow_capacity_name(t, dc.X, dc.Y)
+            add_to_constraint!(lp, c_X_Y, p_i, 1.0)
+            if !isinf(dc.p)
+                c__X = flow_capacity_name(t, Set{T}(), dc.X)
+                add_to_constraint!(lp, c__X, p_i, 1.0 / dc.p)
+            end
+        end
+    end
+end
+
+function set_objective!(lp::LP, dcs::Vector{DC{T}}) where T
+    for (i, dc) ∈ enumerate(dcs)
+        p_i = dc_coefficient_name(i)
+        add_to_objective!(lp, p_i, dc.b)
+    end
+end
+
 function simple_dc_bound(dcs::Vector{DC{T}}, vars::Vector{T}) where T
     lp = LP(false)
-    return to_jump(lp)
+    (vertices, edges) = _collect_vertices_and_edges(dcs, vars)
+    add_flow_constraints!(lp, dcs, vars, vertices, edges)
+    set_objective!(lp, dcs)
+    model = to_jump(lp)
+    optimize!(model)
+    @assert termination_status(model) == MathOptInterface.OPTIMAL
+    return objective_value(model)
 end
 
 ###########################################################################################
 
 dcs = [
-    DC(Symbol[], [:A], Inf, 1),
-    DC([:A], [:B], Inf, 1),
-    DC([:B], [:C], Inf, 1),
+    DC(Symbol[], [:A, :B], Inf, 1),
+    DC(Symbol[], [:A, :C], Inf, 1),
+    DC(Symbol[], [:B, :C], Inf, 1),
 ]
+
+vars = [:A, :B, :C]
+
+println(simple_dc_bound(dcs, vars))
 
 end
