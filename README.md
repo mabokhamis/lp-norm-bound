@@ -1,0 +1,1 @@
+This repo implements the join size bound based on Lp-norms of degree sequences, as described [here](https://arxiv.org/abs/2306.14075). Specifically, it implements the special case of "simple" degree sequences, following the algorithm from [here](https://arxiv.org/pdf/2211.08381.pdf).
