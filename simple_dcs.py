@@ -148,7 +148,7 @@ def _collect_vertices_and_edges(dcs, vars):
 
     for dc in dcs:
         _add_edge(dc.X, dc.Y)
-        if not float('inf') == dc.p:
+        if dc.p != float('inf'):
             _add_edge(set(), dc.X)
 
     for dc in dcs:
