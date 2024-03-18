@@ -44,7 +44,7 @@ class LP:
         assert variable in self.variables
         self.objective.sum[variable] += coefficient
 
-def to_jump(lp):
+def to_lp_problem(lp):
     model = LpProblem("LP", LpMaximize if lp.objective.maximize else LpMinimize)
     var_map = {name: LpVariable(
             name,
@@ -86,7 +86,7 @@ def get_values(var_map):
 #     lp.add_to_objective("y", 1.0)
 #     lp.add_to_objective("z", 1.0)
 
-#     model, var_map = to_jump(lp)
+#     model, var_map = to_lp_problem(lp)
 #     print(model)
 #     model.solve()
 
@@ -192,7 +192,7 @@ def simple_dc_bound(dcs, vars):
     vertices, edges = _collect_vertices_and_edges(dcs, vars)
     add_flow_constraints(lp, dcs, vars, vertices, edges)
     set_objective(lp, dcs)
-    model, var_map = to_jump(lp)
+    model, var_map = to_lp_problem(lp)
     print(model)
     model.solve()
     assert model.status == 1  # 1 corresponds to Optimal
