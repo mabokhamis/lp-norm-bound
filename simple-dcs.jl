@@ -312,15 +312,15 @@ end
 
 ###########################################################################################
 
-dcs = [
-    DC(Symbol[], [:A, :B], 1, 1),
-    DC(Symbol[], [:A, :C], 1, 1),
-    DC(Symbol[], [:B, :C], 1, 1),
-]
+# dcs = [
+#     DC(Symbol[], [:A, :B], 1, 1),
+#     DC(Symbol[], [:A, :C], 1, 1),
+#     DC(Symbol[], [:B, :C], 1, 1),
+# ]
 
-vars = [:A, :B, :C]
+# vars = [:A, :B, :C]
 
-println(simple_dc_bound(dcs, vars))
+# println(simple_dc_bound(dcs, vars))
 
 # dcs = [
 #     DC(Symbol[], [:A, :B], Inf, 1),
@@ -332,14 +332,14 @@ println(simple_dc_bound(dcs, vars))
 
 # println(simple_dc_bound(dcs, vars))
 
-# dcs = [
-#     DC(Symbol[:A], [:B], 2, 1),
-#     DC(Symbol[:B], [:C], 2, 1),
-#     DC(Symbol[:C], [:A], 2, 1),
-# ]
+dcs = [
+    DC(Symbol[:A], [:B], 2, 1),
+    DC(Symbol[:B], [:C], 2, 1),
+    DC(Symbol[:C], [:A], 2, 1),
+]
 
-# vars = [:A, :B, :C]
+vars = [:A, :B, :C]
 
-# println(simple_dc_bound(dcs, vars))
+println(simple_dc_bound(dcs, vars))
 
 end

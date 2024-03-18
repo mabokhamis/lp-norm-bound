@@ -62,10 +62,7 @@ def to_jump(lp):
             if con.lower_bound != float('-inf'):
                 model += lpSum(coef * var_map[v] for v, coef in con.sum.items()) >= con.lower_bound
 
-    if lp.objective.maximize:
-        model += lpSum(coef * var_map[v] for v, coef in lp.objective.sum.items())
-    else:
-        model += -lpSum(coef * var_map[v] for v, coef in lp.objective.sum.items())
+    model += lpSum(coef * var_map[v] for v, coef in lp.objective.sum.items())
 
     return model, var_map
 
@@ -75,20 +72,16 @@ def get_values(var_map):
 ###########################################################################################
 
 # def main():
-#     lp = LP(True)
-#     lp.add_variable("x", 0, 1.0)
+#     lp = LP(False)
+#     lp.add_variable("x", 0, float('inf'))
 #     lp.add_variable("y", 0, float('inf'))
 #     lp.add_variable("z", 0, float('inf'))
-#     lp.add_constraint("xy", 0, 1)
-#     lp.add_to_constraint("xy", "x", 1.0)
-#     lp.add_to_constraint("xy", "x", 1.0)
-#     lp.add_to_constraint("xy", "y", 1.0)
-#     lp.add_constraint("yz", float('-inf'), 1.0)
-#     lp.add_to_constraint("yz", "y", 1.0)
-#     lp.add_to_constraint("yz", "z", 1.0)
-#     lp.add_constraint("xz", float('-inf'), 1.0)
-#     lp.add_to_constraint("xz", "x", 1.0)
-#     lp.add_to_constraint("xz", "z", 1.0)
+#     lp.add_constraint("xx", 0, float('inf'))
+#     lp.add_to_constraint("xx", "x", 1)
+#     lp.add_constraint("yy", 0, float('inf'))
+#     lp.add_to_constraint("yy", "y", 1)
+#     lp.add_constraint("zz", 0, float('inf'))
+#     lp.add_to_constraint("zz", "z", 1)
 #     lp.add_to_objective("x", 1.0)
 #     lp.add_to_objective("y", 1.0)
 #     lp.add_to_objective("z", 1.0)
@@ -110,7 +103,7 @@ def get_values(var_map):
 class DC:
     def __init__(self, X, Y, p, b):
         self.X = set(X)
-        self.Y = set(Y)
+        self.Y = set(X).union(set(Y))
         self.p = float(p)
         self.b = float(b)
 
@@ -210,15 +203,15 @@ def simple_dc_bound(dcs, vars):
 
 ###########################################################################################
 
-dcs = [
-    DC([], ['A', 'B'], 1, 1),
-    DC([], ['A', 'C'], 1, 1),
-    DC([], ['B', 'C'], 1, 1),
-]
+# dcs = [
+#     DC([], ['A', 'B'], 1, 1),
+#     DC([], ['A', 'C'], 1, 1),
+#     DC([], ['B', 'C'], 1, 1),
+# ]
 
-vars = ['A', 'B', 'C']
+# vars = ['A', 'B', 'C']
 
-print(simple_dc_bound(dcs, vars))
+# print(simple_dc_bound(dcs, vars))
 
 # dcs = [
 #     DC([], ['A', 'B'], float('inf'), 1),
@@ -230,12 +223,12 @@ print(simple_dc_bound(dcs, vars))
 
 # print(simple_dc_bound(dcs, vars))
 
-# dcs = [
-#     DC({'A'}, {'B'}, 2, 1),
-#     DC({'B'}, {'C'}, 2, 1),
-#     DC({'C'}, {'A'}, 2, 1),
-# ]
+dcs = [
+    DC({'A'}, {'B'}, 2, 1),
+    DC({'B'}, {'C'}, 2, 1),
+    DC({'C'}, {'A'}, 2, 1),
+]
 
-# vars = ['A', 'B', 'C']
+vars = ['A', 'B', 'C']
 
-# print(simple_dc_bound(dcs, vars))
+print(simple_dc_bound(dcs, vars))
