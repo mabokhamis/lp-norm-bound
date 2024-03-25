@@ -129,25 +129,48 @@ test_lp1()
 
 ###########################################################################################
 
+# `DC` is a representation of a bound on an Lp-norm of a degree sequence, as described in
+# [this paper](https://arxiv.org/abs/2306.14075). The fields are as follows:
+#  - `X` is the set of variables
+#  - `Y` is another set of variables
+#  - `p` is a number (same "p" from "Lp-norm")
+#  - `b` is a real number representing the bound
+# Let `deg(Y|X)` be the degree sequence of the variables in `Y` conditioned on the variables
+# in `X`. Then, the bound is
+# ```
+# ||deg(Y|X)||_p <= b`
+# ```
+# NOTE: A DC is called "simple" if `|X| <= 1`
 class DC:
     def __init__(self, X, Y, p, b):
         self.X = set(X)
-        self.Y = set(X).union(set(Y))
+        self.Y = set(X).union(set(Y)) # Note that we always include X in Y
         self.p = float(p)
         self.b = float(b)
 
+# Given a set `X`, sort `X`, convert each element to a string, and concatenate the strings.
 def _name(X):
     return ''.join([str(num) for num in sorted(X)])
 
+# Below, we implement the LP for the Lp-norm bound with *simple* degree constraints, as
+# described in [this paper](https://arxiv.org/abs/2211.08381). The LP consists of `n`
+# different network flows, where `n` is the number of variables. In particular, for every
+# `t ∈ [n]`, there is a different network flow. We refer to it as the "t-flow".
+
+# The flow variable `f_t_X_Y` represents the flow from `X` to `Y` in the t-flow
 def flow_var_name(t, X, Y):
     return f"f{t}_{_name(X)}_{_name(Y)}"
 
+# Th capacity constraint `c_t_X_Y` enforces a capacity on the flow from `X` to `Y` in the
+# t-flow
 def flow_capacity_name(t, X, Y):
     return f"c{t}_{_name(X)}_{_name(Y)}"
 
+# The flow conservation constraint `e_t_Z` enforces flow conservation at `Z` in the t-flow
 def flow_conservation_name(t, Z):
     return f"e{t}_{_name(Z)}"
 
+# The DC coefficient `p_i` is the coefficient of the i-th DC in the objective
 def dc_coefficient_name(i):
     return f"p_{i}"
 
@@ -182,6 +205,7 @@ def _collect_vertices_and_edges(dcs, vars):
 
 def add_flow_constraints(lp, dcs, vars, vertices, edges):
     for i, dc in enumerate(dcs):
+        assert len(dc.X) <= 1, "Only simple degree constraints are supported"
         lp.add_variable(dc_coefficient_name(i), 0.0, float('inf'))
 
     for t, v in enumerate(vars):
@@ -232,32 +256,41 @@ def simple_dc_bound(dcs, vars):
 
 ###########################################################################################
 
-# dcs = [
-#     DC([], ['A', 'B'], 1, 1),
-#     DC([], ['A', 'C'], 1, 1),
-#     DC([], ['B', 'C'], 1, 1),
-# ]
+# Testcases for the simple_dc_bound function
 
-# vars = ['A', 'B', 'C']
+def test_simple_dc_bound1():
+    dcs = [
+        DC([], ['A', 'B'], 1, 1),
+        DC([], ['A', 'C'], 1, 1),
+        DC([], ['B', 'C'], 1, 1),
+    ]
+    vars = ['A', 'B', 'C']
+    assert math.isclose(simple_dc_bound(dcs, vars), 1.5)
 
-# print(simple_dc_bound(dcs, vars))
+# -----------------------------
 
-# dcs = [
-#     DC([], ['A', 'B'], float('inf'), 1),
-#     DC([], ['A', 'C'], float('inf'), 1),
-#     DC([], ['B', 'C'], float('inf'), 1),
-# ]
+def test_simple_dc_bound2():
+    dcs = [
+        DC([], ['A', 'B'], float('inf'), 1),
+        DC([], ['A', 'C'], float('inf'), 1),
+        DC([], ['B', 'C'], float('inf'), 1),
+    ]
+    vars = ['A', 'B', 'C']
+    assert math.isclose(simple_dc_bound(dcs, vars), 1.5)
 
-# vars = ['A', 'B', 'C']
+# -----------------------------
 
-# print(simple_dc_bound(dcs, vars))
+def test_simple_dc_bound3():
+    dcs = [
+        DC(['A'], ['B'], 2, 1),
+        DC(['B'], ['C'], 2, 1),
+        DC(['C'], ['A'], 2, 1),
+    ]
+    vars = ['A', 'B', 'C']
+    assert math.isclose(simple_dc_bound(dcs, vars), 2.0, rel_tol=1e-07)
 
-# dcs = [
-#     DC({'A'}, {'B'}, 2, 1),
-#     DC({'B'}, {'C'}, 2, 1),
-#     DC({'C'}, {'A'}, 2, 1),
-# ]
+# -----------------------------
 
-# vars = ['A', 'B', 'C']
-
-# print(simple_dc_bound(dcs, vars))
+test_simple_dc_bound1()
+test_simple_dc_bound2()
+test_simple_dc_bound3()
