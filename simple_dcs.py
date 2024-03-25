@@ -154,26 +154,30 @@ def _name(X):
 
 # Below, we implement the LP for the Lp-norm bound with *simple* degree constraints, as
 # described in [this paper](https://arxiv.org/abs/2211.08381). The LP consists of `n`
-# different network flows, where `n` is the number of variables. In particular, for every
-# `t ∈ [n]`, there is a different network flow. We refer to it as the "t-flow".
+# different network flows, where `n` is the number of target variables, i.e. variables whose
+# cardinality we are trying to bound. In particular, for every `t ∈ [n]`, there is a
+# different network flow. We refer to it as the "t-flow".
 
-# The flow variable `f_t_X_Y` represents the flow from `X` to `Y` in the t-flow
+# The flow variable `ft_X_Y` represents the flow from `X` to `Y` in the t-flow
 def flow_var_name(t, X, Y):
     return f"f{t}_{_name(X)}_{_name(Y)}"
 
-# Th capacity constraint `c_t_X_Y` enforces a capacity on the flow from `X` to `Y` in the
+# Th capacity constraint `ct_X_Y` enforces a capacity on the flow from `X` to `Y` in the
 # t-flow
 def flow_capacity_name(t, X, Y):
     return f"c{t}_{_name(X)}_{_name(Y)}"
 
-# The flow conservation constraint `e_t_Z` enforces flow conservation at `Z` in the t-flow
+# The flow conservation constraint `et_Z` enforces flow conservation at `Z` in the t-flow
 def flow_conservation_name(t, Z):
     return f"e{t}_{_name(Z)}"
 
-# The DC coefficient `p_i` is the coefficient of the i-th DC in the objective
+# The DC coefficient `a_i` is the coefficient of the i-th DC in the objective
 def dc_coefficient_name(i):
-    return f"p_{i}"
+    return f"a_{i}"
 
+# Given a list of DCs `dcs` and a list of target variables `vars`, construct the vertices
+# and edges of the network flow. All t-flows share the same network structure: They only
+# differ in flow values.
 def _collect_vertices_and_edges(dcs, vars):
     vertices = set()
     edges = set()
@@ -191,11 +195,17 @@ def _collect_vertices_and_edges(dcs, vars):
     for v in vars:
         vertices.add(frozenset({v}))
 
+    # For every DC, add the following edges to the network flow:
+    #  - One edge from X to Y
+    #  - One edge from {} to X
     for dc in dcs:
         _add_edge(dc.X, dc.Y)
         if dc.p != float('inf'):
             _add_edge(set(), dc.X)
 
+    # For every DC, add the following edges to the network flow:
+    #  - One edge from Y to {}
+    #  - One edge from Y to {y} for every y in Y
     for dc in dcs:
         _add_edge(dc.Y, set())
         for y in dc.Y:
@@ -208,38 +218,61 @@ def add_flow_constraints(lp, dcs, vars, vertices, edges):
         assert len(dc.X) <= 1, "Only simple degree constraints are supported"
         lp.add_variable(dc_coefficient_name(i), 0.0, float('inf'))
 
+    # For every t-flow
     for t, v in enumerate(vars):
+        # For every vertex `Z`, add a flow conservation constraint that enforces the total
+        # flow to `Z` to be:
+        #   - `+1` if `Z` is the target variable `t`
+        #   - `-1` if `Z` is the source {}
+        #   - `0` otherwise
         for Z in vertices:
-            e_Z = flow_conservation_name(t, Z)
-            n_Z = 1.0 if Z == {v} else -1.0 if not Z else 0.0
-            lp.add_constraint(e_Z, n_Z, float('inf'))
+            et_Z = flow_conservation_name(t, Z)
+            nt_Z = 1.0 if Z == {v} else -1.0 if not Z else 0.0
+            lp.add_constraint(et_Z, nt_Z, float('inf'))
 
+        # For every edge `X -> Y`
         for X, Y in edges:
-            f_X_Y = flow_var_name(t, X, Y)
-            lp.add_variable(f_X_Y, -float('inf') if X <= Y else 0.0, float('inf'))
-            e_X = flow_conservation_name(t, X)
-            e_Y = flow_conservation_name(t, Y)
-            lp.add_to_constraint(e_X, f_X_Y, -1.0)
-            lp.add_to_constraint(e_Y, f_X_Y, 1.0)
+            # `ft_X_Y` is the t-flow from `X` to `Y`:
+            #   - If `X` is a subset of `Y`, then `ft_X_Y` could be anywhere from -inf to
+            #     the capacity. (The capacity constraint `ct_X_Y` will be added later)
+            #   - Otherwise (i.e. if `Y` is a subset of `X`), then `ft_X_Y` can be
+            #     anywhere from 0 to inf
+            ft_X_Y = flow_var_name(t, X, Y)
+            lp.add_variable(ft_X_Y, -float('inf') if X <= Y else 0.0, float('inf'))
+            et_X = flow_conservation_name(t, X)
+            et_Y = flow_conservation_name(t, Y)
+            # Add `+ft_X_Y` to the flow conservation at `Y` and `-ft_X_Y` to the flow
+            # conservation at `X`
+            lp.add_to_constraint(et_X, ft_X_Y, -1.0)
+            lp.add_to_constraint(et_Y, ft_X_Y, 1.0)
+            # If `X` is a subset of `Y`, then there is a capacity constraint on the flow
+            # from `X` to `Y`
             if X <= Y:
-                c_X_Y = flow_capacity_name(t, X, Y)
-                lp.add_constraint(c_X_Y, 0.0, float('inf'))
-                lp.add_to_constraint(c_X_Y, f_X_Y, -1.0)
+                ct_X_Y = flow_capacity_name(t, X, Y)
+                lp.add_constraint(ct_X_Y, 0.0, float('inf'))
+                lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0)
 
+        # The i-th DC `(X, Y, p, b)` contributes to two capacity constraints:
+        #   - It contributes `a_i` to the capacity constraint from `X` to `Y` (where `a_i`
+        #     is the coefficient of the i-th DC in the objective)
+        #   - It contributes `a_i / p` to the capacity constraint from {} to `X`
         for i, dc in enumerate(dcs):
-            p_i = dc_coefficient_name(i)
+            a_i = dc_coefficient_name(i)
             if dc.X != dc.Y:
-                c_X_Y = flow_capacity_name(t, dc.X, dc.Y)
-                lp.add_to_constraint(c_X_Y, p_i, 1.0)
+                ct_X_Y = flow_capacity_name(t, dc.X, dc.Y)
+                lp.add_to_constraint(ct_X_Y, a_i, 1.0)
             if dc.p != float('inf') and dc.X:
-                c__X = flow_capacity_name(t, set(), dc.X)
-                lp.add_to_constraint(c__X, p_i, 1.0 / dc.p)
+                ct__X = flow_capacity_name(t, set(), dc.X)
+                lp.add_to_constraint(ct__X, a_i, 1.0 / dc.p)
 
+# The objective is to minimize the sum of `a_i * dc[i].b` over all DCs
 def set_objective(lp, dcs):
     for i, dc in enumerate(dcs):
-        p_i = dc_coefficient_name(i)
-        lp.add_to_objective(p_i, dc.b)
+        a_i = dc_coefficient_name(i)
+        lp.add_to_objective(a_i, dc.b)
 
+# Given a list of *simple* DCs `dcs` and a list of target variables `vars`, compute the
+# Lp-norm bound on the target variables.
 def simple_dc_bound(dcs, vars):
     lp = LP(False)
     vertices, edges = _collect_vertices_and_edges(dcs, vars)
