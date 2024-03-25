@@ -1,14 +1,17 @@
+import math
 from collections import defaultdict
 from itertools import combinations
-
 from pulp import LpMaximize, LpMinimize, LpProblem, LpVariable, lpSum, value
 
+# A variable has a name, lower bound, and upper bound.
 class Variable:
     def __init__(self, name, lower_bound, upper_bound):
         self.name = name
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
 
+# A constraint has a name, lower bound, upper bound, and a sum of variables. The sum is
+# represented as a dictionary from variable names to coefficients.
 class Constraint:
     def __init__(self, name, lower_bound, upper_bound):
         self.name = name
@@ -16,36 +19,46 @@ class Constraint:
         self.upper_bound = upper_bound
         self.sum = defaultdict(float)
 
+# The objective has a boolean flag to indicate whether it is a maximization or minimization
+# and a sum indicating the objective function. The sum is represented as a dictionary from
+# variables names to coefficients.
 class Objective:
     def __init__(self, maximize):
         self.maximize = maximize
         self.sum = defaultdict(float)
 
+# A linear program has variables, constraints, and an objective.
 class LP:
     def __init__(self, maximize):
         self.variables = {}
         self.constraints = {}
         self.objective = Objective(maximize)
 
+    # Add a variable to the LP
     def add_variable(self, name, lower_bound, upper_bound):
         assert name not in self.variables
         self.variables[name] = Variable(name, lower_bound, upper_bound)
 
+    # Add a constraint to the LP
     def add_constraint(self, name, lower_bound, upper_bound):
         assert name not in self.constraints
         self.constraints[name] = Constraint(name, lower_bound, upper_bound)
 
+    # Add `coefficient * variable` to the given constraint
     def add_to_constraint(self, constraint, variable, coefficient):
         assert constraint in self.constraints
         assert variable in self.variables
         self.constraints[constraint].sum[variable] += coefficient
 
+    # Add `coefficient * variable` to the objective
     def add_to_objective(self, variable, coefficient):
         assert variable in self.variables
         self.objective.sum[variable] += coefficient
 
+# Convert an LP to a Pulp LpProblem
 def to_lp_problem(lp):
     model = LpProblem("LP", LpMaximize if lp.objective.maximize else LpMinimize)
+    # `var_map` is a dictionary from variable names to Pulp LpVariables
     var_map = {name: LpVariable(
             name,
             lowBound = var.lower_bound if var.lower_bound != float('-inf') else None,
@@ -66,37 +79,53 @@ def to_lp_problem(lp):
 
     return model, var_map
 
+# Get a dictionary from variable names to their values
 def get_values(var_map):
     return {name: value(v) for name, v in var_map.items()}
 
 ###########################################################################################
 
-# def main():
-#     lp = LP(False)
-#     lp.add_variable("x", 0, float('inf'))
-#     lp.add_variable("y", 0, float('inf'))
-#     lp.add_variable("z", 0, float('inf'))
-#     lp.add_constraint("xx", 0, float('inf'))
-#     lp.add_to_constraint("xx", "x", 1)
-#     lp.add_constraint("yy", 0, float('inf'))
-#     lp.add_to_constraint("yy", "y", 1)
-#     lp.add_constraint("zz", 0, float('inf'))
-#     lp.add_to_constraint("zz", "z", 1)
-#     lp.add_to_objective("x", 1.0)
-#     lp.add_to_objective("y", 1.0)
-#     lp.add_to_objective("z", 1.0)
+# A Testcase for the LP conversion
+def test_lp1():
+    lp = LP(True)
+    lp.add_variable("x", 0, float('inf'))
+    lp.add_variable("y", 0, float('inf'))
+    lp.add_variable("z", 0, float('inf'))
 
-#     model, var_map = to_lp_problem(lp)
-#     print(model)
-#     model.solve()
+    # C0: x + y <= 1
+    lp.add_constraint("C0", float('-inf'), 1)
+    lp.add_to_constraint("C0", "x", 1)
+    lp.add_to_constraint("C0", "y", 1)
 
-#     assert model.status == 1  # 1 corresponds to Optimal
-#     print("Objective value:", model.objective.value())
-#     for name, var in var_map.items():
-#         print(name, "=", var.varValue)
+    # C1: y + z <= 1
+    lp.add_constraint("C1", float('-inf'), 1)
+    lp.add_to_constraint("C1", "y", 1)
+    lp.add_to_constraint("C1", "z", 1)
 
-# if __name__ == "__main__":
-#     main()
+    # C2: x + z <= 1
+    lp.add_constraint("C2", float('-inf'), 1)
+    lp.add_to_constraint("C2", "x", 1)
+    lp.add_to_constraint("C2", "z", 1)
+
+    # Objective: Maximize x + y + z
+    lp.add_to_objective("x", 1.0)
+    lp.add_to_objective("y", 1.0)
+    lp.add_to_objective("z", 1.0)
+
+    model, var_map = to_lp_problem(lp)
+    model.solve()
+
+    assert model.status == 1  # 1 corresponds to Optimal
+    # The optimal value is 1.5
+    assert math.isclose(model.objective.value(), 1.5)
+
+    # The optimal solution is x = 0.5, y = 0.5, z = 0.5
+    values = get_values(var_map)
+    assert math.isclose(values["x"], 0.5)
+    assert math.isclose(values["y"], 0.5)
+    assert math.isclose(values["z"], 0.5)
+
+test_lp1()
 
 ###########################################################################################
 
@@ -223,12 +252,12 @@ def simple_dc_bound(dcs, vars):
 
 # print(simple_dc_bound(dcs, vars))
 
-dcs = [
-    DC({'A'}, {'B'}, 2, 1),
-    DC({'B'}, {'C'}, 2, 1),
-    DC({'C'}, {'A'}, 2, 1),
-]
+# dcs = [
+#     DC({'A'}, {'B'}, 2, 1),
+#     DC({'B'}, {'C'}, 2, 1),
+#     DC({'C'}, {'A'}, 2, 1),
+# ]
 
-vars = ['A', 'B', 'C']
+# vars = ['A', 'B', 'C']
 
-print(simple_dc_bound(dcs, vars))
+# print(simple_dc_bound(dcs, vars))
