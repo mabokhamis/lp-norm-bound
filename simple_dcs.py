@@ -324,6 +324,32 @@ def test_simple_dc_bound3():
 
 # -----------------------------
 
+def test_simple_dc_bound_JOB_Q1():
+    # ||deg({'0MC', '1'}|{'1'})||_1.0 = 1334883.0
+    # ||deg({'0MC', '1'}|{'1'})||_2.0 = 1685.8359943956589
+    # ||deg({'0MC', '1'}|{'1'})||_3.0 = 232.70072156462575
+    # ...
+    # ||deg({'1', '0MI_IDX'}|{'1'})||_14.0 = 1.4834790899372283
+    # ||deg({'1', '0MI_IDX'}|{'1'})||_15.0 = 1.4449827655296232
+    # ||deg({'1', '0MI_IDX'}|{'1'})||_inf = 1.0
+
+    dcs = [
+        DC(['1'], ['0MC', '1'], 1, math.log2(1334883.0)),
+        DC(['1'], ['0MC', '1'], 2, math.log2(1685.8359943956589)),
+        DC(['1'], ['0MC', '1'], 3, math.log2(232.70072156462575)),
+        # ...
+        DC(['1'], ['0MI_IDX', '1'], 14, math.log2(1.4834790899372283)),
+        DC(['1'], ['0MI_IDX', '1'], 15, math.log2(1.4449827655296232)),
+        DC(['1'], ['0MI_IDX', '1'], float('inf'), math.log2(1.0)),
+    ]
+
+    vars = ['0MC', '0MI_IDX', '1']
+    bound = pow(2, simple_dc_bound(dcs, vars))
+    print(bound)
+
+# -----------------------------
+
 test_simple_dc_bound1()
 test_simple_dc_bound2()
 test_simple_dc_bound3()
+test_simple_dc_bound_JOB_Q1()
