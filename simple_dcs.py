@@ -138,7 +138,7 @@ test_lp1()
 # Let `deg(Y|X)` be the degree sequence of the variables in `Y` conditioned on the variables
 # in `X`. Then, the bound is
 # ```
-# ||deg(Y|X)||_p <= b`
+# log_2 ||deg(Y|X)||_p <= b`
 # ```
 # NOTE: A DC is called "simple" if `|X| <= 1`
 class DC:
