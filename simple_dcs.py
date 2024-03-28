@@ -160,12 +160,12 @@ def _name(X):
 
 # The flow variable `ft_X_Y` represents the flow from `X` to `Y` in the t-flow
 def flow_var_name(t, X, Y):
-    return f"f{t}_{_name(Y)}|{_name(X)}"
+    return f"f{t}_{_name(X)}->{_name(Y)}"
 
 # Th capacity constraint `ct_X_Y` enforces a capacity on the flow from `X` to `Y` in the
 # t-flow
 def flow_capacity_name(t, X, Y):
-    return f"c{t}_{_name(Y)}|{_name(X)}"
+    return f"c{t}_{_name(X)}->{_name(Y)}"
 
 # The flow conservation constraint `et_Z` enforces flow conservation at `Z` in the t-flow
 def flow_conservation_name(t, Z):
