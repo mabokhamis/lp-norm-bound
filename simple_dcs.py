@@ -150,7 +150,7 @@ class DC:
 
 # Given a set `X`, sort `X`, convert each element to a string, and concatenate the strings.
 def _name(X):
-    return ''.join([str(num) for num in sorted(X)])
+    return '{' + ','.join([str(num) for num in sorted(X)]) + '}'
 
 # Below, we implement the LP for the Lp-norm bound with *simple* degree constraints, as
 # described in [this paper](https://arxiv.org/abs/2211.08381). The LP consists of `n`
@@ -160,12 +160,12 @@ def _name(X):
 
 # The flow variable `ft_X_Y` represents the flow from `X` to `Y` in the t-flow
 def flow_var_name(t, X, Y):
-    return f"f{t}_{_name(X)}_{_name(Y)}"
+    return f"f{t}_{_name(Y)}|{_name(X)}"
 
 # Th capacity constraint `ct_X_Y` enforces a capacity on the flow from `X` to `Y` in the
 # t-flow
 def flow_capacity_name(t, X, Y):
-    return f"c{t}_{_name(X)}_{_name(Y)}"
+    return f"c{t}_{_name(Y)}|{_name(X)}"
 
 # The flow conservation constraint `et_Z` enforces flow conservation at `Z` in the t-flow
 def flow_conservation_name(t, Z):
