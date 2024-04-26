@@ -3,7 +3,8 @@ CXX = g++
 # Compiler flags
 CXXFLAGS = -std=c++11 -Wall -Wextra
 # HiGHS library path
-HIGHS_PATH = /usr/local
+HIGHS_PATH_LIB = /usr/local/lib
+HIGHS_PATH_INCLUDE = /usr/local/include/highs
 
 # Source files
 SRCS = main.cpp
@@ -14,11 +15,11 @@ EXEC = my_program
 
 # Rule to build executable
 $(EXEC): $(OBJS)
-	$(CXX) $(CXXFLAGS) -L$(HIGHS_PATH)/lib -o $@ $^ -lhighs
+	$(CXX) $(CXXFLAGS) -L$(HIGHS_PATH_LIB) -o $@ $^ -lhighs
 
 # Rule to compile source files
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -I$(HIGHS_PATH)/include/highs -c $^
+	$(CXX) $(CXXFLAGS) -I$(HIGHS_PATH_INCLUDE) -c $^
 
 # Rule to clean generated files
 clean:
