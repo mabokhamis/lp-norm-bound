@@ -1,7 +1,7 @@
 # Compiler
 CXX = g++
 # Compiler flags
-CXXFLAGS = -std=c++11 -Wall -Wextra
+CXXFLAGS = -std=c++11 -Wall
 # HiGHS library path
 HIGHS_PATH_LIB = /usr/local/lib
 HIGHS_PATH_INCLUDE = /usr/local/include/highs
