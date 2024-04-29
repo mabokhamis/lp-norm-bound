@@ -42,26 +42,26 @@ public:
     Objective objective;
 
     // Add a variable to the LP
-    void add_variable(string name, double lower_bound, double upper_bound) {
+    void add_variable(const string name, double lower_bound, double upper_bound) {
         assert(variables.find(name) == variables.end());
         variables[name] = {name, lower_bound, upper_bound};
     }
 
     // Add a constraint to the LP
-    void add_constraint(string name, double lower_bound, double upper_bound) {
+    void add_constraint(const string name, double lower_bound, double upper_bound) {
         assert(constraints.find(name) == constraints.end());
         constraints[name] = {name, lower_bound, upper_bound};
     }
 
     // Add `coefficient * variable` to the given constraint
-    void add_to_constraint(string constraint, string variable, double coefficient) {
+    void add_to_constraint(const string constraint, const string variable, double coefficient) {
         assert(constraints.find(constraint) != constraints.end());
         assert(variables.find(variable) != variables.end());
         constraints[constraint].sum[variable] += coefficient;
     }
 
     // Add `coefficient * variable` to the objective
-    void add_to_objective(string variable, double coefficient) {
+    void add_to_objective(const string variable, double coefficient) {
         assert(variables.find(variable) != variables.end());
         objective.sum[variable] += coefficient;
     }
