@@ -77,7 +77,7 @@ std::ostream& operator<<(std::ostream& os, const Variable& v) {
     return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const map<string, double> &sum) {
+std::ostream& operator<<(std::ostream& os, const map<string, double>& sum) {
     for (const auto& e : sum) {
         const auto& name = e.first;
         const auto& coeff = e.second;
@@ -149,13 +149,13 @@ struct DC {
 
 // Given a set `X`, convert each element to a string and concatenate the strings.
 string _name(const set<string> &X) {
-    vector<string> X2(X.begin(), X.end());
-    sort(X2.begin(), X2.end());
     string name = "{";
-    for (size_t i = 0; i < X2.size(); ++i) {
-        name += X2[i];
-        if (i != X2.size() - 1)
+    size_t i = 0;
+    for (const auto &x : X) {
+        name += x;
+        if (i != X.size() - 1)
             name += ",";
+        ++i;
     }
     name += "}";
     return name;
@@ -188,10 +188,11 @@ void _add_edge(
     set<pair<set<string>, set<string>>>& edges
 ) {
     assert(is_subset(X, Y) || is_subset(Y, X));
-    vertices.insert(X);
-    vertices.insert(Y);
-    if (X != Y && edges.find({Y, X}) == edges.end())
+    if (X != Y && edges.find({Y, X}) == edges.end()) {
+        vertices.insert(X);
+        vertices.insert(Y);
         edges.insert({X, Y});
+    }
 }
 
 // Given a list of DCs `dcs` and a list of target variables `vars`, construct the vertices
