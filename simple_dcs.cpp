@@ -229,8 +229,14 @@ void test_lp1() {
     lp.add_to_objective("y", 1.0);
     lp.add_to_objective("z", 1.0);
     lp.add_to_objective("t", 1.0);
-    float opt = solve(lp).first;
-    assert(abs(opt - 3.5) < 1e-7);
+    auto sol = solve(lp);
+    auto& obj = sol.first;
+    auto& val = sol.second;
+    assert(abs(obj - 3.5) < 1e-7);
+    assert(abs(val["x"] - 0.5) < 1e-7);
+    assert(abs(val["y"] - 0.5) < 1e-7);
+    assert(abs(val["z"] - 0.5) < 1e-7);
+    assert(abs(val["t"] - 2.0) < 1e-7);
 }
 
 /******************************************************************************************/
