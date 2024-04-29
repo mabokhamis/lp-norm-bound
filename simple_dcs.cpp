@@ -33,6 +33,8 @@ struct Constraint {
 struct Objective {
     bool maximize;
     map<string, double> sum;
+
+    Objective(bool maximize_) : maximize(maximize_) {}
 };
 
 // A linear program has variables, constraints, and an objective.
@@ -41,6 +43,8 @@ public:
     map<string, Variable> variables;
     map<string, Constraint> constraints;
     Objective objective;
+
+    LP(bool maximize) : objective(maximize) {}
 
     // Add a variable to the LP
     void add_variable(const string& name, double lower_bound, double upper_bound) {
@@ -125,26 +129,26 @@ inline float g(float x) {
 }
 
 // Convert an LP to a Pulp LpProblem
-double to_lp_problem(LP &lp) {
+pair<double,map<string,double>> solve(LP &p) {
     map<string, double> var_map;
-    int n = lp.variables.size();
-    int m = lp.constraints.size();
+    int n = p.variables.size();
+    int m = p.constraints.size();
     map<string, int> var_index;
     int i = 0;
-    for (const auto& v : lp.variables)
+    for (const auto& v : p.variables)
         var_index[v.first] = i++;
     HighsModel model;
     model.lp_.num_col_ = n;
     model.lp_.num_row_ = m;
-    model.lp_.sense_ = lp.objective.maximize ? ObjSense::kMaximize : ObjSense::kMinimize;
+    model.lp_.sense_ = p.objective.maximize ? ObjSense::kMaximize : ObjSense::kMinimize;
     model.lp_.offset_ = 0.0;
     model.lp_.col_cost_.resize(n);
-    for (const auto& v : lp.objective.sum)
+    for (const auto& v : p.objective.sum)
         model.lp_.col_cost_[var_index[v.first]] = v.second;
     model.lp_.col_lower_.resize(n);
     model.lp_.col_upper_.resize(n);
     i = 0;
-    for (const auto& v : lp.variables) {
+    for (const auto& v : p.variables) {
         model.lp_.col_lower_[i] = g(v.second.lower_bound);
         model.lp_.col_upper_[i] = g(v.second.upper_bound);
         ++i;
@@ -152,7 +156,7 @@ double to_lp_problem(LP &lp) {
     model.lp_.row_lower_.resize(m);
     model.lp_.row_upper_.resize(m);
     i = 0;
-    for (const auto& c : lp.constraints) {
+    for (const auto& c : p.constraints) {
         model.lp_.row_lower_[i] = g(c.second.lower_bound);
         model.lp_.row_upper_[i] = g(c.second.upper_bound);
         ++i;
@@ -160,7 +164,7 @@ double to_lp_problem(LP &lp) {
     model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
     model.lp_.a_matrix_.start_.resize(m + 1);
     i = 0;
-    for (const auto& c : lp.constraints) {
+    for (const auto& c : p.constraints) {
         model.lp_.a_matrix_.start_[i] = model.lp_.a_matrix_.index_.size();
         for (const auto& t : c.second.sum) {
             model.lp_.a_matrix_.index_.push_back(var_index[t.first]);
@@ -179,7 +183,7 @@ double to_lp_problem(LP &lp) {
     assert(return_status==HighsStatus::kOk);
 
     // Get a const reference to the LP data in HiGHS
-    const HighsLp& lp = highs.getLp();
+    // const HighsLp& lp = highs.getLp();
 
     // Solve the model
     return_status = highs.run();
@@ -190,12 +194,43 @@ double to_lp_problem(LP &lp) {
     assert(model_status==HighsModelStatus::kOptimal);
 
     const HighsInfo& info = highs.getInfo();
-    return info.objective_function_value;
+    const float obj = info.objective_function_value;
+    const bool has_values = info.primal_solution_status;
+
+    const HighsSolution& solution = highs.getSolution();
+    map<string,double> sol;
+    // cout << "Primal Solution:" << endl;
+    i = 0;
+    if (has_values)
+        for (auto& v : p.variables) {
+            sol[v.first] = solution.col_value[i++];
+            // cout << "    " << v.first << ": " << sol[v.first] << endl;
+        }
+
+    return make_pair(obj, sol);
 }
 
-// Get a dictionary from variable names to their values
-map<string, double> get_values(map<string, double> &var_map) {
-    return var_map;
+void test_lp1() {
+    LP lp(true);
+    lp.add_variable("x", 0.0, INFINITY);
+    lp.add_variable("y", 0.0, INFINITY);
+    lp.add_variable("z", 0.0, INFINITY);
+    lp.add_variable("t", 0.0, 2.0);
+    lp.add_constraint("c1", -INFINITY, 1.0);
+    lp.add_to_constraint("c1", "x", 1.0);
+    lp.add_to_constraint("c1", "y", 1.0);
+    lp.add_constraint("c2", -INFINITY, 1.0);
+    lp.add_to_constraint("c2", "y", 1.0);
+    lp.add_to_constraint("c2", "z", 1.0);
+    lp.add_constraint("c3", -INFINITY, 1.0);
+    lp.add_to_constraint("c3", "x", 1.0);
+    lp.add_to_constraint("c3", "z", 1.0);
+    lp.add_to_objective("x", 1.0);
+    lp.add_to_objective("y", 1.0);
+    lp.add_to_objective("z", 1.0);
+    lp.add_to_objective("t", 1.0);
+    float opt = solve(lp).first;
+    assert(abs(opt - 3.5) < 1e-7);
 }
 
 /******************************************************************************************/
@@ -352,14 +387,13 @@ void set_objective(LP &lp, const vector<DC> &dcs) {
 }
 
 double simple_dc_bound(vector<DC> &dcs, const vector<string> &vars) {
-    LP lp;
+    LP lp(false);
     auto ve = _collect_vertices_and_edges(dcs, vars);
     auto &vertices = ve.first;
     auto &edges = ve.second;
     add_flow_constraints(lp, dcs, vars, vertices, edges);
     set_objective(lp, dcs);
-    cout << lp << endl;
-    return 0.0;
+    return solve(lp).first;
 }
 
 // Testcases for the simple_dc_bound function
@@ -370,7 +404,8 @@ void test_simple_dc_bound1() {
         { {}, {"B", "C"}, 1, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    simple_dc_bound(dcs, vars);
+    float p = simple_dc_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
 }
 
 void test_simple_dc_bound2() {
@@ -380,7 +415,8 @@ void test_simple_dc_bound2() {
         { {}, {"B", "C"}, INFINITY, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    simple_dc_bound(dcs, vars);
+    float p = simple_dc_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
 }
 
 void test_simple_dc_bound3() {
@@ -390,11 +426,14 @@ void test_simple_dc_bound3() {
         { {"C"}, {"A"}, 2, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    simple_dc_bound(dcs, vars);
+    float p = simple_dc_bound(dcs, vars);
+    assert(abs(p - 2.0) < 1e-7);
 }
 
 // Add other test functions similarly
 int main() {
+    test_lp1();
+    cout << string(80, '-') << endl;
     test_simple_dc_bound1();
     cout << string(80, '-') << endl;
     test_simple_dc_bound2();
