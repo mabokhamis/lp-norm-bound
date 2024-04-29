@@ -7,6 +7,7 @@
 #include <cmath>
 #include <numeric>
 #include <cassert>
+#include "Highs.h"
 
 using namespace std;
 
@@ -115,17 +116,81 @@ std::ostream& operator<<(std::ostream& os, const LP& lp) {
     return os;
 }
 
+inline float g(float x) {
+    if (x == INFINITY)
+        return 1.0e30;
+    if (x == -INFINITY)
+        return -1.0e30;
+    return x;
+}
+
 // Convert an LP to a Pulp LpProblem
-tuple<int, map<string, double>> to_lp_problem(LP &lp) {
+double to_lp_problem(LP &lp) {
     map<string, double> var_map;
+    int n = lp.variables.size();
+    int m = lp.constraints.size();
+    map<string, int> var_index;
+    int i = 0;
+    for (const auto& v : lp.variables)
+        var_index[v.first] = i++;
+    HighsModel model;
+    model.lp_.num_col_ = n;
+    model.lp_.num_row_ = m;
+    model.lp_.sense_ = lp.objective.maximize ? ObjSense::kMaximize : ObjSense::kMinimize;
+    model.lp_.offset_ = 0.0;
+    model.lp_.col_cost_.resize(n);
+    for (const auto& v : lp.objective.sum)
+        model.lp_.col_cost_[var_index[v.first]] = v.second;
+    model.lp_.col_lower_.resize(n);
+    model.lp_.col_upper_.resize(n);
+    i = 0;
+    for (const auto& v : lp.variables) {
+        model.lp_.col_lower_[i] = g(v.second.lower_bound);
+        model.lp_.col_upper_[i] = g(v.second.upper_bound);
+        ++i;
+    }
+    model.lp_.row_lower_.resize(m);
+    model.lp_.row_upper_.resize(m);
+    i = 0;
+    for (const auto& c : lp.constraints) {
+        model.lp_.row_lower_[i] = g(c.second.lower_bound);
+        model.lp_.row_upper_[i] = g(c.second.upper_bound);
+        ++i;
+    }
+    model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
+    model.lp_.a_matrix_.start_.resize(m + 1);
+    i = 0;
+    for (const auto& c : lp.constraints) {
+        model.lp_.a_matrix_.start_[i] = model.lp_.a_matrix_.index_.size();
+        for (const auto& t : c.second.sum) {
+            model.lp_.a_matrix_.index_.push_back(var_index[t.first]);
+            model.lp_.a_matrix_.value_.push_back(t.second);
+        }
+        ++i;
+    }
+    model.lp_.a_matrix_.start_[i] = model.lp_.a_matrix_.index_.size();
 
-    // for (auto &[name, var] : lp.variables) {
-    //     var_map[name] = 0.0; // Initialize all variables to zero
-    // }
+    // Create a Highs instance
+    Highs highs;
+    HighsStatus return_status;
 
-    // Solving the LP here would involve using a suitable LP solver library, which is beyond the scope of this translation.
+    // Pass the model to HiGHS
+    return_status = highs.passModel(model);
+    assert(return_status==HighsStatus::kOk);
 
-    return make_tuple(1, var_map); // Return dummy status and variable values
+    // Get a const reference to the LP data in HiGHS
+    const HighsLp& lp = highs.getLp();
+
+    // Solve the model
+    return_status = highs.run();
+    assert(return_status==HighsStatus::kOk);
+
+    // Get the model status
+    const HighsModelStatus& model_status = highs.getModelStatus();
+    assert(model_status==HighsModelStatus::kOptimal);
+
+    const HighsInfo& info = highs.getInfo();
+    return info.objective_function_value;
 }
 
 // Get a dictionary from variable names to their values
