@@ -42,26 +42,26 @@ public:
     Objective objective;
 
     // Add a variable to the LP
-    void add_variable(const string name, double lower_bound, double upper_bound) {
+    void add_variable(const string& name, double lower_bound, double upper_bound) {
         assert(variables.find(name) == variables.end());
         variables[name] = {name, lower_bound, upper_bound};
     }
 
     // Add a constraint to the LP
-    void add_constraint(const string name, double lower_bound, double upper_bound) {
+    void add_constraint(const string& name, double lower_bound, double upper_bound) {
         assert(constraints.find(name) == constraints.end());
         constraints[name] = {name, lower_bound, upper_bound};
     }
 
     // Add `coefficient * variable` to the given constraint
-    void add_to_constraint(const string constraint, const string variable, double coefficient) {
+    void add_to_constraint(const string& constraint, const string& variable, double coefficient) {
         assert(constraints.find(constraint) != constraints.end());
         assert(variables.find(variable) != variables.end());
         constraints[constraint].sum[variable] += coefficient;
     }
 
     // Add `coefficient * variable` to the objective
-    void add_to_objective(const string variable, double coefficient) {
+    void add_to_objective(const string& variable, double coefficient) {
         assert(variables.find(variable) != variables.end());
         objective.sum[variable] += coefficient;
     }
@@ -78,11 +78,11 @@ std::ostream& operator<<(std::ostream& os, const Variable& v) {
 
 std::ostream& operator<<(std::ostream& os, const map<string, double>& sum) {
     bool first = true;
-    for (const auto& e : sum) {
+    for (const auto& t : sum) {
         if (!first)
             os << " + ";
         first = false;
-        os << e.second << "*" << e.first;
+        os << t.second << "*" << t.first;
     }
     return os;
 }
@@ -97,9 +97,9 @@ std::ostream& operator<<(std::ostream& os, const Constraint& constraint) {
     return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const Objective& objective) {
-    os << (objective.maximize ? "maximize" : "minimize") << " ";
-    os << objective.sum;
+std::ostream& operator<<(std::ostream& os, const Objective& obj) {
+    os << (obj.maximize ? "maximize" : "minimize") << " ";
+    os << obj.sum;
     return os;
 }
 
@@ -142,14 +142,14 @@ struct DC {
     double p;
     double b;
 
-    DC(const set<string> X_, const set<string> Y_, double p_, double b_)
+    DC(const set<string>& X_, const set<string>& Y_, double p_, double b_)
     : X(X_), Y(Y_), p(p_), b(b_) {
         copy(X.begin(), X.end(), inserter(Y, Y.end()));
     }
 };
 
 // Given a set `X`, convert each element to a string and concatenate the strings.
-string _name(const set<string> &X) {
+inline string _name(const set<string> &X) {
     string name = "{";
     bool first = true;
     for (const auto &x : X) {
@@ -167,19 +167,19 @@ ostream& operator<<(ostream& os, const DC& dc) {
     return os;
 }
 
-string flow_var_name(int t, const set<string> &X, const set<string> &Y) {
+inline string flow_var_name(int t, const set<string> &X, const set<string> &Y) {
     return "f" + to_string(t) + "_" + _name(X) + "->" + _name(Y);
 }
 
-string flow_capacity_name(int t, const set<string> &X, const set<string> &Y) {
+inline string flow_capacity_name(int t, const set<string> &X, const set<string> &Y) {
     return "c" + to_string(t) + "_" + _name(X) + "->" + _name(Y);
 }
 
-string flow_conservation_name(int t, const set<string> &Z) {
+inline string flow_conservation_name(int t, const set<string> &Z) {
     return "e" + to_string(t) + "_" + _name(Z);
 }
 
-string dc_coefficient_name(int i) {
+inline string dc_coefficient_name(int i) {
     return "a_" + to_string(i);
 }
 
@@ -188,8 +188,8 @@ bool is_subset(const set<string> &X, const set<string> &Y) {
 }
 
 void _add_edge(
-    const set<string> X,
-    const set<string> Y,
+    const set<string>& X,
+    const set<string>& Y,
     set<set<string>>& vertices,
     set<pair<set<string>, set<string>>>& edges
 ) {
@@ -204,7 +204,7 @@ void _add_edge(
 // Given a list of DCs `dcs` and a list of target variables `vars`, construct the vertices
 // and edges of the network flow.
 pair<set<set<string>>, set<pair<set<string>, set<string>>>>
-_collect_vertices_and_edges(vector<DC> &dcs, vector<string> &vars) {
+_collect_vertices_and_edges(const vector<DC> &dcs, const vector<string> &vars) {
     set<set<string>> vertices;
     set<pair<set<string>, set<string>>> edges;
 
@@ -214,9 +214,8 @@ _collect_vertices_and_edges(vector<DC> &dcs, vector<string> &vars) {
         _add_edge(dc.X, dc.Y, vertices, edges);
 
         // If p is not infinity, add edge from {} to X
-        if (dc.p != INFINITY) {
+        if (dc.p != INFINITY)
             _add_edge({}, dc.X, vertices, edges);
-        }
     }
 
     // Add edges from Y to {} and from Y to {y} for every y in Y
@@ -255,15 +254,16 @@ void add_flow_constraints(
         for (const auto &edge : edges) {
             auto &X = edge.first;
             auto &Y = edge.second;
-            string ft_X_Y = flow_var_name(t, X, Y);
+            const string& ft_X_Y = flow_var_name(t, X, Y);
             double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
             double upper_bound = INFINITY;
             lp.add_variable(ft_X_Y, lower_bound, upper_bound);
             lp.add_to_constraint(flow_conservation_name(t, X), ft_X_Y, -1.0);
             lp.add_to_constraint(flow_conservation_name(t, Y), ft_X_Y, 1.0);
             if (X.size() <= Y.size()) {
-                lp.add_constraint(flow_capacity_name(t, X, Y), 0.0, INFINITY);
-                lp.add_to_constraint(flow_capacity_name(t, X, Y), ft_X_Y, -1.0);
+                const string& ct_X_Y = flow_capacity_name(t, X, Y);
+                lp.add_constraint(ct_X_Y, 0.0, INFINITY);
+                lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0);
             }
         }
 
@@ -286,7 +286,7 @@ void set_objective(LP &lp, const vector<DC> &dcs) {
     }
 }
 
-double simple_dc_bound(vector<DC> &dcs, vector<string> &vars) {
+double simple_dc_bound(vector<DC> &dcs, const vector<string> &vars) {
     LP lp;
     auto ve = _collect_vertices_and_edges(dcs, vars);
     auto &vertices = ve.first;
