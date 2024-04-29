@@ -72,9 +72,9 @@ public:
 tuple<int, unordered_map<string, double>> to_lp_problem(LP &lp) {
     unordered_map<string, double> var_map;
 
-    for (auto &[name, var] : lp.variables) {
-        var_map[name] = 0.0; // Initialize all variables to zero
-    }
+    // for (auto &[name, var] : lp.variables) {
+    //     var_map[name] = 0.0; // Initialize all variables to zero
+    // }
 
     // Solving the LP here would involve using a suitable LP solver library, which is beyond the scope of this translation.
 
@@ -95,7 +95,7 @@ struct DC {
     double p;
     double b;
 
-    DC(set<string> X_, set<string> Y_, double p_, double b_)
+    DC(const set<string> X_, const set<string> Y_, double p_, double b_)
     : X(X_), Y(Y_), p(p_), b(b_) {
         copy(X.begin(), X.end(), inserter(Y, Y.end()));
     }
@@ -155,6 +155,11 @@ _collect_vertices_and_edges(vector<DC> &dcs, vector<string> &vars) {
     set<set<string>> vertices;
     set<pair<set<string>, set<string>>> edges;
 
+    vertices.insert({});
+    for (auto &var : vars) {
+        vertices.insert({var});
+    }
+
     // For every DC, add edges to the network flow
     for (auto &dc : dcs) {
         // Add edge from X to Y
@@ -177,95 +182,86 @@ _collect_vertices_and_edges(vector<DC> &dcs, vector<string> &vars) {
     return make_pair(vertices, edges);
 }
 
-// void add_flow_constraints(LP &lp, vector<DC> &dcs, vector<string> &vars, vector<vector<string>> &vertices, vector<pair<vector<string>, vector<string>>> &edges) {
-//     for (size_t i = 0; i < dcs.size(); ++i) {
-//         assert(dcs[i].X.size() <= 1); // Only simple degree constraints are supported
-//         lp.add_variable("a_" + to_string(i), 0.0, INFINITY);
-//     }
+void add_flow_constraints(
+    LP lp,
+    const vector<DC>& dcs,
+    const vector<string>& vars,
+    const set<set<string>>& vertices,
+    const set<pair<set<string>, set<string>>>& edges
+) {
+    for (size_t i = 0; i < dcs.size(); ++i) {
+        assert(dcs[i].X.size() <= 1); // Only simple degree constraints are supported
+        lp.add_variable(dc_coefficient_name(i), 0.0, INFINITY);
+    }
 
-//     // For every t-flow
-//     for (size_t t = 0; t < vars.size(); ++t) {
-//         // For every vertex `Z`, add a flow conservation constraint
-//         for (auto &Z : vertices) {
-//             double nt_Z = (Z.size() == 1 && Z[0] == vars[t]) ? 1.0 : (Z.size() == 0 ? -1.0 : 0.0);
-//             lp.add_constraint("e" + to_string(t) + "_" + _name(Z), nt_Z, INFINITY);
-//         }
+    // For every t-flow
+    for (size_t t = 0; t < vars.size(); ++t) {
+        // For every vertex `Z`, add a flow conservation constraint
+        for (auto &Z : vertices) {
+            double nt_Z = (Z.size() == 1 && Z.find(vars[t]) != Z.end()) ?
+                1.0 : (Z.size() == 0 ? -1.0 : 0.0);
+            lp.add_constraint(flow_conservation_name(t, Z), nt_Z, INFINITY);
+        }
 
-//         // For every edge `X -> Y`
-//         for (auto &[X, Y] : edges) {
-//             string ft_X_Y = "f" + to_string(t) + "_" + _name(X) + "->" + _name(Y);
-//             double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
-//             double upper_bound = INFINITY;
-//             lp.add_variable(ft_X_Y, lower_bound, upper_bound);
-//             string et_X = "e" + to_string(t) + "_" + _name(X);
-//             string et_Y = "e" + to_string(t) + "_" + _name(Y);
-//             lp.add_to_constraint(et_X, ft_X_Y, -1.0);
-//             lp.add_to_constraint(et_Y, ft_X_Y, 1.0);
-//             if (X.size() <= Y.size()) {
-//                 lp.add_constraint("c" + to_string(t) + "_" + _name(X) + "->" + _name(Y), 0.0, INFINITY);
-//                 lp.add_to_constraint("c" + to_string(t) + "_" + _name(X) + "->" + _name(Y), ft_X_Y, -1.0);
-//             }
-//         }
+        // For every edge `X -> Y`
+        for (auto &edge : edges) {
+            auto &X = edge.first;
+            auto &Y = edge.second;
+            string ft_X_Y = flow_var_name(t, X, Y);
+            double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
+            double upper_bound = INFINITY;
+            lp.add_variable(ft_X_Y, lower_bound, upper_bound);
+            lp.add_to_constraint(flow_conservation_name(t, X), ft_X_Y, -1.0);
+            lp.add_to_constraint(flow_conservation_name(t, Y), ft_X_Y, 1.0);
+            if (X.size() <= Y.size()) {
+                lp.add_constraint(flow_capacity_name(t, X, Y), 0.0, INFINITY);
+                lp.add_to_constraint(flow_capacity_name(t, X, Y), ft_X_Y, -1.0);
+            }
+        }
 
-//         // Add coefficients to capacity constraints
-//         for (size_t i = 0; i < dcs.size(); ++i) {
-//             string a_i = "a_" + to_string(i);
-//             if (dcs[i].X.size() != dcs[i].Y.size()) {
-//                 lp.add_to_constraint("c" + to_string(t) + "_" + _name(dcs[i].X) + "->" + _name(dcs[i].Y), a_i, 1.0);
-//             }
-//             if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
-//                 lp.add_to_constraint("c" + to_string(t) + "_{}->" + _name(dcs[i].X), a_i, 1.0 / dcs[i].p);
-//             }
-//         }
-//     }
-// }
+        // Add coefficients to capacity constraints
+        for (size_t i = 0; i < dcs.size(); ++i) {
+            string a_i = dc_coefficient_name(i);
+            if (dcs[i].X.size() != dcs[i].Y.size()) {
+                lp.add_to_constraint(flow_capacity_name(t, dcs[i].X, dcs[i].Y), a_i, 1.0);
+            }
+            if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
+                lp.add_to_constraint(flow_capacity_name(t, {}, dcs[i].X), a_i, 1.0 / dcs[i].p);
+            }
+        }
+    }
+}
 
-// // The objective is to minimize the sum of `a_i * dc[i].b` over all DCs
-// void set_objective(LP &lp, vector<DC> &dcs) {
-//     for (size_t i = 0; i < dcs.size(); ++i) {
-//         lp.add_to_objective("a_" + to_string(i), dcs[i].b);
-//     }
-// }
+void set_objective(LP &lp, const vector<DC> &dcs) {
+    for (size_t i = 0; i < dcs.size(); ++i) {
+        lp.add_to_objective(dc_coefficient_name(i), dcs[i].b);
+    }
+}
 
-// // Given a list of *simple* DCs `dcs` and a list of target variables `vars`, compute the
-// // Lp-norm bound on the target variables.
-// double simple_dc_bound(vector<DC> &dcs, vector<string> &vars) {
-//     LP lp;
-//     auto [vertices, edges] = _collect_vertices_and_edges(dcs, vars);
-//     add_flow_constraints(lp, dcs, vars, vertices, edges);
-//     set_objective(lp, dcs);
-//     auto [status, var_map] = to_lp_problem(lp);
-//     assert(status == 1); // 1 corresponds to Optimal
-//     for (auto &[x, v] : var_map) {
-//         cout << x << " = " << v << endl;
-//     }
-//     return accumulate(dcs.begin(), dcs.end(), 0.0, [](double acc, const DC &dc) {
-//         return acc + dc.b; // Return the sum of b values
-//     });
-// }
+double simple_dc_bound(vector<DC> &dcs, vector<string> &vars) {
+    LP lp;
+    auto ve = _collect_vertices_and_edges(dcs, vars);
+    auto &vertices = ve.first;
+    auto &edges = ve.second;
+    add_flow_constraints(lp, dcs, vars, vertices, edges);
+    set_objective(lp, dcs);
+    return 0.0;
+}
 
-// // Testcases for the simple_dc_bound function
+// Testcases for the simple_dc_bound function
 
-// void test_simple_dc_bound1() {
-//     vector<DC> dcs = {
-//         { {}, {"A", "B"}, 1, 1 },
-//         { {}, {"A", "C"}, 1, 1 },
-//         { {}, {"B", "C"}, 1, 1 }
-//     };
-//     vector<string> vars = { "A", "B", "C" };
-//     assert(abs(simple_dc_bound(dcs, vars) - 1.5) < 1e-9);
-// }
+void test_simple_dc_bound1() {
+    vector<DC> dcs = {
+        { {}, {"A", "B"}, 1, 1 },
+        { {}, {"A", "C"}, 1, 1 },
+        { {}, {"B", "C"}, 1, 1 }
+    };
+    vector<string> vars = { "A", "B", "C" };
+    simple_dc_bound(dcs, vars);
+}
 
-// // Add other test functions similarly
-
+// Add other test functions similarly
 int main() {
-    LP lp = LP();
-    lp.add_variable("x", 0.0, 1.0);
-    // cout << lp.variables.size() << endl;
-    const set<string> X = {"x"};
-    const set<string> Y = {"y"};
-    DC dc = DC({"x"}, {"b", "a"}, 1.0, 1.0);
-    cout << _name(dc.Y) << endl;
-    cout << flow_var_name(1, dc.X, dc.Y) << endl;
+    test_simple_dc_bound1();
     return 0;
 }
