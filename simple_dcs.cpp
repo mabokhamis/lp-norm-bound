@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <set>
-#include <unordered_map>
+#include <map>
 #include <string>
 #include <cmath>
 #include <cassert>
@@ -24,7 +24,7 @@ struct Constraint {
     string name;
     double lower_bound;
     double upper_bound;
-    unordered_map<string, double> sum;
+    map<string, double> sum;
 };
 
 // The objective has a boolean flag to indicate whether it is a maximization or minimization
@@ -32,14 +32,14 @@ struct Constraint {
 // variables names to coefficients.
 struct Objective {
     bool maximize;
-    unordered_map<string, double> sum;
+    map<string, double> sum;
 };
 
 // A linear program has variables, constraints, and an objective.
 class LP {
 public:
-    unordered_map<string, Variable> variables;
-    unordered_map<string, Constraint> constraints;
+    map<string, Variable> variables;
+    map<string, Constraint> constraints;
     Objective objective;
 
     // Add a variable to the LP
@@ -68,9 +68,55 @@ public:
     }
 };
 
+std::ostream& operator<<(std::ostream& os, const Variable& v) {
+    if (v.lower_bound != -INFINITY)
+        os << v.lower_bound << " <= ";
+    os << v.name;
+    if (v.upper_bound != INFINITY)
+        os << " <= " << v.upper_bound;
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const map<string, double> &sum) {
+    for (const auto& e : sum) {
+        const auto& name = e.first;
+        const auto& coeff = e.second;
+        os << " + "<< coeff << "*" << name;
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const Constraint& constraint) {
+    os << constraint.name << ": ";
+    if (constraint.lower_bound != -INFINITY)
+        os << constraint.lower_bound << " <= ";
+    os << constraint.sum;
+    if (constraint.upper_bound != INFINITY)
+        os << " <= " << constraint.upper_bound;
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const Objective& objective) {
+    os << (objective.maximize ? "maximize" : "minimize") << " ";
+    os << objective.sum;
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const LP& lp) {
+    os << lp.objective << endl;
+    os << "subject to" << endl;
+    for (const auto& v : lp.variables) {
+        os << v.second << endl;
+    }
+    for (const auto& c : lp.constraints) {
+        os << c.second << endl;
+    }
+    return os;
+}
+
 // Convert an LP to a Pulp LpProblem
-tuple<int, unordered_map<string, double>> to_lp_problem(LP &lp) {
-    unordered_map<string, double> var_map;
+tuple<int, map<string, double>> to_lp_problem(LP &lp) {
+    map<string, double> var_map;
 
     // for (auto &[name, var] : lp.variables) {
     //     var_map[name] = 0.0; // Initialize all variables to zero
@@ -82,7 +128,7 @@ tuple<int, unordered_map<string, double>> to_lp_problem(LP &lp) {
 }
 
 // Get a dictionary from variable names to their values
-unordered_map<string, double> get_values(unordered_map<string, double> &var_map) {
+map<string, double> get_values(map<string, double> &var_map) {
     return var_map;
 }
 
@@ -183,7 +229,7 @@ _collect_vertices_and_edges(vector<DC> &dcs, vector<string> &vars) {
 }
 
 void add_flow_constraints(
-    LP lp,
+    LP &lp,
     const vector<DC>& dcs,
     const vector<string>& vars,
     const set<set<string>>& vertices,
@@ -245,11 +291,11 @@ double simple_dc_bound(vector<DC> &dcs, vector<string> &vars) {
     auto &edges = ve.second;
     add_flow_constraints(lp, dcs, vars, vertices, edges);
     set_objective(lp, dcs);
+    cout << lp << endl;
     return 0.0;
 }
 
 // Testcases for the simple_dc_bound function
-
 void test_simple_dc_bound1() {
     vector<DC> dcs = {
         { {}, {"A", "B"}, 1, 1 },
