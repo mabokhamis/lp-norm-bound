@@ -12,7 +12,7 @@ using namespace std;
 
 // A variable has a name, lower bound, and upper bound.
 struct Variable {
-    string name;
+    const string name;
     double lower_bound;
     double upper_bound;
 };
@@ -20,7 +20,7 @@ struct Variable {
 // A constraint has a name, lower bound, upper bound, and a sum of variables. The sum is
 // represented as a dictionary from variable names to coefficients.
 struct Constraint {
-    string name;
+    const string name;
     double lower_bound;
     double upper_bound;
     map<string, double> sum;
@@ -44,13 +44,13 @@ public:
     // Add a variable to the LP
     void add_variable(const string& name, double lower_bound, double upper_bound) {
         assert(variables.find(name) == variables.end());
-        variables[name] = {name, lower_bound, upper_bound};
+        variables.insert({name, {name, lower_bound, upper_bound}});
     }
 
     // Add a constraint to the LP
     void add_constraint(const string& name, double lower_bound, double upper_bound) {
         assert(constraints.find(name) == constraints.end());
-        constraints[name] = {name, lower_bound, upper_bound};
+        constraints.insert({name, {name, lower_bound, upper_bound}});
     }
 
     // Add `coefficient * variable` to the given constraint
