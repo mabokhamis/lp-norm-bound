@@ -2,12 +2,11 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <algorithm>
 #include <string>
 #include <cmath>
-#include <cassert>
 #include <numeric>
-#include <tuple>
-#include <algorithm>
+#include <cassert>
 
 using namespace std;
 
@@ -78,16 +77,18 @@ std::ostream& operator<<(std::ostream& os, const Variable& v) {
 }
 
 std::ostream& operator<<(std::ostream& os, const map<string, double>& sum) {
+    bool first = true;
     for (const auto& e : sum) {
-        const auto& name = e.first;
-        const auto& coeff = e.second;
-        os << " + "<< coeff << "*" << name;
+        if (!first)
+            os << " + ";
+        first = false;
+        os << e.second << "*" << e.first;
     }
     return os;
 }
 
 std::ostream& operator<<(std::ostream& os, const Constraint& constraint) {
-    os << constraint.name << ": ";
+    os << constraint.name << ":    ";
     if (constraint.lower_bound != -INFINITY)
         os << constraint.lower_bound << " <= ";
     os << constraint.sum;
@@ -106,10 +107,10 @@ std::ostream& operator<<(std::ostream& os, const LP& lp) {
     os << lp.objective << endl;
     os << "subject to" << endl;
     for (const auto& v : lp.variables) {
-        os << v.second << endl;
+        os << "    " << v.second << endl;
     }
     for (const auto& c : lp.constraints) {
-        os << c.second << endl;
+        os << "    " << c.second << endl;
     }
     return os;
 }
@@ -150,15 +151,20 @@ struct DC {
 // Given a set `X`, convert each element to a string and concatenate the strings.
 string _name(const set<string> &X) {
     string name = "{";
-    size_t i = 0;
+    bool first = true;
     for (const auto &x : X) {
-        name += x;
-        if (i != X.size() - 1)
+        if (!first)
             name += ",";
-        ++i;
+        first = false;
+        name += x;
     }
     name += "}";
     return name;
+}
+
+ostream& operator<<(ostream& os, const DC& dc) {
+    os << "log_2 |deg(" << _name(dc.Y) << "|" << _name(dc.X) << ")|_" << dc.p << " <= " << dc.b;
+    return os;
 }
 
 string flow_var_name(int t, const set<string> &X, const set<string> &Y) {
@@ -202,11 +208,6 @@ _collect_vertices_and_edges(vector<DC> &dcs, vector<string> &vars) {
     set<set<string>> vertices;
     set<pair<set<string>, set<string>>> edges;
 
-    vertices.insert({});
-    for (auto &var : vars) {
-        vertices.insert({var});
-    }
-
     // For every DC, add edges to the network flow
     for (auto &dc : dcs) {
         // Add edge from X to Y
@@ -244,14 +245,14 @@ void add_flow_constraints(
     // For every t-flow
     for (size_t t = 0; t < vars.size(); ++t) {
         // For every vertex `Z`, add a flow conservation constraint
-        for (auto &Z : vertices) {
-            double nt_Z = (Z.size() == 1 && Z.find(vars[t]) != Z.end()) ?
+        for (const auto &Z : vertices) {
+            double nt_Z = (Z.size() == 1 && *Z.begin() == vars[t]) ?
                 1.0 : (Z.size() == 0 ? -1.0 : 0.0);
             lp.add_constraint(flow_conservation_name(t, Z), nt_Z, INFINITY);
         }
 
         // For every edge `X -> Y`
-        for (auto &edge : edges) {
+        for (const auto &edge : edges) {
             auto &X = edge.first;
             auto &Y = edge.second;
             string ft_X_Y = flow_var_name(t, X, Y);
@@ -307,8 +308,33 @@ void test_simple_dc_bound1() {
     simple_dc_bound(dcs, vars);
 }
 
+void test_simple_dc_bound2() {
+    vector<DC> dcs = {
+        { {}, {"A", "B"}, INFINITY, 1 },
+        { {}, {"A", "C"}, INFINITY, 1 },
+        { {}, {"B", "C"}, INFINITY, 1 }
+    };
+    vector<string> vars = { "A", "B", "C" };
+    simple_dc_bound(dcs, vars);
+}
+
+void test_simple_dc_bound3() {
+    vector<DC> dcs = {
+        { {"A"}, {"B"}, 2, 1 },
+        { {"B"}, {"C"}, 2, 1 },
+        { {"C"}, {"A"}, 2, 1 }
+    };
+    vector<string> vars = { "A", "B", "C" };
+    simple_dc_bound(dcs, vars);
+}
+
 // Add other test functions similarly
 int main() {
     test_simple_dc_bound1();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound2();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound3();
+    cout << string(80, '-') << endl;
     return 0;
 }

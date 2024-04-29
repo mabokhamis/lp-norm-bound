@@ -11,7 +11,7 @@ SRCS = simple_dcs.cpp
 # Object files
 OBJS = $(SRCS:.cpp=.o)
 # Executable name
-EXEC = my_program
+EXEC = simple_dcs
 
 # Rule to build executable
 $(EXEC): $(OBJS)
