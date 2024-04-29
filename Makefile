@@ -7,7 +7,7 @@ HIGHS_PATH_LIB = /usr/local/lib
 HIGHS_PATH_INCLUDE = /usr/local/include/highs
 
 # Source files
-SRCS = main.cpp
+SRCS = simple_dcs.cpp
 # Object files
 OBJS = $(SRCS:.cpp=.o)
 # Executable name
