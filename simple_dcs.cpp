@@ -392,7 +392,7 @@ void set_objective(LP &lp, const vector<DC> &dcs) {
     }
 }
 
-double simple_dc_bound(vector<DC> &dcs, const vector<string> &vars) {
+double simple_dc_bound(const vector<DC> &dcs, const vector<string> &vars) {
     LP lp(false);
     auto ve = _collect_vertices_and_edges(dcs, vars);
     auto &vertices = ve.first;
