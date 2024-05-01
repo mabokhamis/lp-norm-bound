@@ -129,7 +129,7 @@ inline float g(float x) {
 }
 
 // Convert an LP to a Pulp LpProblem
-pair<double,map<string,double>> solve(LP &p) {
+pair<double,map<string,double>> solve(const LP &p) {
     map<string, double> var_map;
     int n = p.variables.size();
     int m = p.constraints.size();
