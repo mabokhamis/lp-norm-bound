@@ -120,14 +120,6 @@ std::ostream& operator<<(std::ostream& os, const LP& lp) {
     return os;
 }
 
-inline float g(float x) {
-    if (x == INFINITY)
-        return 1.0e30;
-    if (x == -INFINITY)
-        return -1.0e30;
-    return x;
-}
-
 // Convert an LP to a Pulp LpProblem
 pair<double,map<string,double>> solve(const LP &p) {
     map<string, double> var_map;
@@ -149,16 +141,16 @@ pair<double,map<string,double>> solve(const LP &p) {
     model.lp_.col_upper_.resize(n);
     i = 0;
     for (const auto& v : p.variables) {
-        model.lp_.col_lower_[i] = g(v.second.lower_bound);
-        model.lp_.col_upper_[i] = g(v.second.upper_bound);
+        model.lp_.col_lower_[i] = v.second.lower_bound;
+        model.lp_.col_upper_[i] = v.second.upper_bound;
         ++i;
     }
     model.lp_.row_lower_.resize(m);
     model.lp_.row_upper_.resize(m);
     i = 0;
     for (const auto& c : p.constraints) {
-        model.lp_.row_lower_[i] = g(c.second.lower_bound);
-        model.lp_.row_upper_[i] = g(c.second.upper_bound);
+        model.lp_.row_lower_[i] = c.second.lower_bound;
+        model.lp_.row_upper_[i] = c.second.upper_bound;
         ++i;
     }
     model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
@@ -194,7 +186,7 @@ pair<double,map<string,double>> solve(const LP &p) {
     assert(model_status==HighsModelStatus::kOptimal);
 
     const HighsInfo& info = highs.getInfo();
-    const float obj = info.objective_function_value;
+    const double obj = info.objective_function_value;
     const bool has_values = info.primal_solution_status;
 
     const HighsSolution& solution = highs.getSolution();
@@ -410,7 +402,7 @@ void test_simple_dc_bound1() {
         { {}, {"B", "C"}, 1, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    float p = simple_dc_bound(dcs, vars);
+    double p = simple_dc_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -421,7 +413,7 @@ void test_simple_dc_bound2() {
         { {}, {"B", "C"}, INFINITY, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    float p = simple_dc_bound(dcs, vars);
+    double p = simple_dc_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -432,7 +424,7 @@ void test_simple_dc_bound3() {
         { {"C"}, {"A"}, 2, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    float p = simple_dc_bound(dcs, vars);
+    double p = simple_dc_bound(dcs, vars);
     assert(abs(p - 2.0) < 1e-7);
 }
 
@@ -505,7 +497,7 @@ void test_simple_dc_bound_JOB_Q1() {
 
     vector<string> vars = {"0MC", "0MI_IDX", "0T", "1"};
 
-    float p = pow(2, simple_dc_bound(dcs, vars));
+    double p = pow(2, simple_dc_bound(dcs, vars));
     assert(abs(p-7017) < 1);
 }
 
