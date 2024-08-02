@@ -215,7 +215,6 @@ void test_lp1() {
     lp.add_to_objective(y, 1.0);
     lp.add_to_objective(z, 1.0);
     lp.add_to_objective(t, 1.0);
-    cout << lp << endl;
     auto sol = solve(lp);
     auto& obj = sol.first;
     auto& val = sol.second;
@@ -228,6 +227,19 @@ void test_lp1() {
 
 /******************************************************************************************/
 
+template <typename T>
+set<T> set_union(const set<T>& X, const set<T>& Y) {
+    set<T> Z;
+    copy(X.begin(), X.end(), inserter(Z, Z.end()));
+    copy(Y.begin(), Y.end(), inserter(Z, Z.end()));
+    return Z;
+}
+
+template <typename T>
+bool is_subset(const set<T> &X, const set<T> &Y) {
+    return includes(Y.begin(), Y.end(), X.begin(), X.end());
+}
+
 // A representation of a bound on an Lp-norm of a degree sequence
 template <typename T>
 struct DC {
@@ -239,14 +251,6 @@ struct DC {
     DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
         : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
 };
-
-template <typename T>
-set<T> set_union(const set<T>& X, const set<T>& Y) {
-    set<T> Z;
-    copy(X.begin(), X.end(), inserter(Z, Z.end()));
-    copy(Y.begin(), Y.end(), inserter(Z, Z.end()));
-    return Z;
-}
 
 inline string name(string s) {
     return s;
@@ -299,14 +303,20 @@ inline string dc_var_name(int i) {
 
 template <typename T>
 struct LpNormLP {
-    LP lp;
+    const vector<DC<T>> dcs;
+    const vector<T> vars;
 
+    LP lp;
     map<tuple<int, const set<T>, const set<T>>, int> flow_var;
     map<tuple<int, const set<T>, const set<T>>, int> flow_capacity_con;
-    map<tuple<int, const set<T>, const set<T>>, int> flow_conservation_con;
+    map<tuple<int, const set<T>>, int> flow_conservation_con;
     map<int, int> dc_var;
 
-    LpNormLP() : lp(false) {}
+    set<set<T>> vertices;
+    set<pair<set<string>, set<string>>> edges;
+
+    LpNormLP(const vector<DC<T>>& dcs_, const vector<T>& vars_) :
+        dcs(dcs_), vars(vars_), lp(false) {}
 
     int add_flow_var(
         int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
@@ -367,11 +377,214 @@ struct LpNormLP {
     inline int get_dc_var(int i) {
         return dc_var[i];
     }
+
+    void add_edge(const set<T>& X, const set<T>& Y) {
+        assert(is_subset(X, Y) || is_subset(Y, X));
+        if (X != Y && edges.find({Y, X}) == edges.end()) {
+            vertices.insert(X);
+            vertices.insert(Y);
+            edges.insert({X, Y});
+        }
+    }
+
+    void construct_graph() {
+        for (auto &dc : dcs) {
+            // This method expects that all DCs are simple
+            assert(dc.X.size() <= 1);
+            // Add edge from X to Y
+            add_edge(dc.X, dc.Y);
+
+            // If p is not infinity, add an edge from {} to X
+            if (dc.p != INFINITY)
+                add_edge({}, dc.X);
+        }
+
+        // Add edges from Y to {} and from Y to {y} for every y in Y
+        for (auto &dc : dcs) {
+            add_edge(dc.Y, {});
+            for (auto &y : dc.Y) {
+                add_edge(dc.Y, {y});
+            }
+        }
+    }
+
+    void add_flow_constraints() {
+        for (size_t i = 0; i < dcs.size(); ++i) {
+            assert(dcs[i].X.size() <= 1); // Only simple degree constraints are supported
+            add_dc_var(i, 0.0, INFINITY);
+        }
+
+        // For every t-flow
+        for (size_t t = 0; t < vars.size(); ++t) {
+            // For every vertex `Z`, add a flow conservation constraint
+            for (const auto &Z : vertices) {
+                double lower_bound = (Z.size() == 1 && *Z.begin() == vars[t]) ?
+                    1.0 : (Z.size() == 0 ? -1.0 : 0.0);
+                add_flow_conservation_con(t, Z, lower_bound, INFINITY);
+            }
+
+            // For every edge `X -> Y`
+            for (const auto &edge : edges) {
+                auto &X = edge.first;
+                auto &Y = edge.second;
+                double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
+                double upper_bound = INFINITY;
+                int ft_X_Y = add_flow_var(t, X, Y, lower_bound, upper_bound);
+                lp.add_to_constraint(get_flow_conservation_con(t, X), ft_X_Y, -1.0);
+                lp.add_to_constraint(get_flow_conservation_con(t, Y), ft_X_Y, 1.0);
+                if (X.size() <= Y.size()) {
+                    int ct_X_Y = add_flow_capacity_con(t, X, Y, 0.0, INFINITY);
+                    lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0);
+                }
+            }
+
+            // Add coefficients to capacity constraints
+            for (size_t i = 0; i < dcs.size(); ++i) {
+                int ai = get_dc_var(i);
+                if (dcs[i].X.size() != dcs[i].Y.size()) {
+                    lp.add_to_constraint(get_flow_capacity_con(t, dcs[i].X, dcs[i].Y), ai, 1.0);
+                }
+                if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
+                    lp.add_to_constraint(get_flow_capacity_con(t, {}, dcs[i].X), ai, 1.0 / dcs[i].p);
+                }
+            }
+        }
+    }
+
+    void set_objective() {
+        for (size_t i = 0; i < dcs.size(); ++i) {
+            lp.add_to_objective(get_dc_var(i), dcs[i].b);
+        }
+    }
 };
 
+template <typename T>
+double simple_dc_bound(const vector<DC<T>> &dcs, const vector<T> &vars) {
+    LpNormLP<string> lp(dcs, vars);
+    lp.construct_graph();
+    lp.add_flow_constraints();
+    lp.set_objective();
+    return solve(lp.lp).first;
+}
+
+// Testcases for the simple_dc_bound function
+void test_simple_dc_bound1() {
+    vector<DC<string>> dcs = {
+        { {}, {"A", "B"}, 1, 1 },
+        { {}, {"A", "C"}, 1, 1 },
+        { {}, {"B", "C"}, 1, 1 }
+    };
+    vector<string> vars = { "A", "B", "C" };
+    double p = simple_dc_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
+}
+
+void test_simple_dc_bound2() {
+    vector<DC<string>> dcs = {
+        { {}, {"A", "B"}, INFINITY, 1 },
+        { {}, {"A", "C"}, INFINITY, 1 },
+        { {}, {"B", "C"}, INFINITY, 1 }
+    };
+    vector<string> vars = { "A", "B", "C" };
+    double p = simple_dc_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
+}
+
+void test_simple_dc_bound3() {
+    vector<DC<string>> dcs = {
+        { {"A"}, {"B"}, 2, 1 },
+        { {"B"}, {"C"}, 2, 1 },
+        { {"C"}, {"A"}, 2, 1 }
+    };
+    vector<string> vars = { "A", "B", "C" };
+    double p = simple_dc_bound(dcs, vars);
+    assert(abs(p - 2.0) < 1e-7);
+}
+
+void test_simple_dc_bound_JOB_Q1() {
+    vector<DC<string>> dcs = {
+        {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
+        {{"1"}, {"0MC", "1"}, 2.0, log2(1685.8359943956589)},
+        {{"1"}, {"0MC", "1"}, 3.0, log2(232.70072156462575)},
+        {{"1"}, {"0MC", "1"}, 4.0, log2(111.6218174166884)},
+        {{"1"}, {"0MC", "1"}, 5.0, log2(89.39599809855387)},
+        {{"1"}, {"0MC", "1"}, 6.0, log2(85.15089958750488)},
+        {{"1"}, {"0MC", "1"}, 7.0, log2(84.28626028158547)},
+        {{"1"}, {"0MC", "1"}, 8.0, log2(84.08192964838128)},
+        {{"1"}, {"0MC", "1"}, 9.0, log2(84.02614781955714)},
+        {{"1"}, {"0MC", "1"}, 10.0, log2(84.00904342807583)},
+        {{"1"}, {"0MC", "1"}, 11.0, log2(84.00331536944712)},
+        {{"1"}, {"0MC", "1"}, 12.0, log2(84.00126786773852)},
+        {{"1"}, {"0MC", "1"}, 13.0, log2(84.00050011506285)},
+        {{"1"}, {"0MC", "1"}, 14.0, log2(84.00020189112921)},
+        {{"1"}, {"0MC", "1"}, 15.0, log2(84.00008295402887)},
+        {{"1"}, {"0MC", "1"}, INFINITY, log2(84.0)},
+        {{"1"}, {"1", "0T"}, 1.0, log2(2528312.0)},
+        {{"1"}, {"1", "0T"}, 2.0, log2(1590.0666652691011)},
+        {{"1"}, {"1", "0T"}, 3.0, log2(136.23129614475658)},
+        {{"1"}, {"1", "0T"}, 4.0, log2(39.87563999823829)},
+        {{"1"}, {"1", "0T"}, 5.0, log2(19.079462387568874)},
+        {{"1"}, {"1", "0T"}, 6.0, log2(11.671816317298546)},
+        {{"1"}, {"1", "0T"}, 7.0, log2(8.216561214186674)},
+        {{"1"}, {"1", "0T"}, 8.0, log2(6.314716145499993)},
+        {{"1"}, {"1", "0T"}, 9.0, log2(5.145476861143866)},
+        {{"1"}, {"1", "0T"}, 10.0, log2(4.368004394179208)},
+        {{"1"}, {"1", "0T"}, 11.0, log2(3.8201068904961626)},
+        {{"1"}, {"1", "0T"}, 12.0, log2(3.4164040038172514)},
+        {{"1"}, {"1", "0T"}, 13.0, log2(3.108317945962265)},
+        {{"1"}, {"1", "0T"}, 14.0, log2(2.8664544674888304)},
+        {{"1"}, {"1", "0T"}, 15.0, log2(2.672116432129139)},
+        {{"1"}, {"1", "0T"}, 16.0, log2(2.5129098960169647)},
+        {{"1"}, {"1", "0T"}, 17.0, log2(2.380329604344474)},
+        {{"1"}, {"1", "0T"}, 18.0, log2(2.2683643581100164)},
+        {{"1"}, {"1", "0T"}, 19.0, log2(2.17265659251006)},
+        {{"1"}, {"1", "0T"}, 20.0, log2(2.089977127668915)},
+        {{"1"}, {"1", "0T"}, 21.0, log2(2.0178863305871544)},
+        {{"1"}, {"1", "0T"}, 22.0, log2(1.9545093733456904)},
+        {{"1"}, {"1", "0T"}, 23.0, log2(1.898383462791728)},
+        {{"1"}, {"1", "0T"}, 24.0, log2(1.848351699168005)},
+        {{"1"}, {"1", "0T"}, 25.0, log2(1.803487874051152)},
+        {{"1"}, {"1", "0T"}, 26.0, log2(1.7630422416840343)},
+        {{"1"}, {"1", "0T"}, 27.0, log2(1.7264017855632618)},
+        {{"1"}, {"1", "0T"}, 28.0, log2(1.6930606803918251)},
+        {{"1"}, {"1", "0T"}, 29.0, log2(1.6625980405997876)},
+        {{"1"}, {"1", "0T"}, 30.0, log2(1.6346609532649696)},
+        {{"1"}, {"1", "0T"}, INFINITY, log2(1.0)},
+        {{"1"}, {"1", "0MI_IDX"}, 1.0, log2(250.0)},
+        {{"1"}, {"1", "0MI_IDX"}, 2.0, log2(15.811388300841896)},
+        {{"1"}, {"1", "0MI_IDX"}, 3.0, log2(6.299605249474365)},
+        {{"1"}, {"1", "0MI_IDX"}, 4.0, log2(3.976353643835253)},
+        {{"1"}, {"1", "0MI_IDX"}, 5.0, log2(3.017088168272582)},
+        {{"1"}, {"1", "0MI_IDX"}, 6.0, log2(2.509901442183411)},
+        {{"1"}, {"1", "0MI_IDX"}, 7.0, log2(2.2007102102809872)},
+        {{"1"}, {"1", "0MI_IDX"}, 8.0, log2(1.9940796483178032)},
+        {{"1"}, {"1", "0MI_IDX"}, 9.0, log2(1.8468761744797573)},
+        {{"1"}, {"1", "0MI_IDX"}, 10.0, log2(1.736976732219687)},
+        {{"1"}, {"1", "0MI_IDX"}, 11.0, log2(1.6519410534528962)},
+        {{"1"}, {"1", "0MI_IDX"}, 12.0, log2(1.584266846899035)},
+        {{"1"}, {"1", "0MI_IDX"}, 13.0, log2(1.5291740650985803)},
+        {{"1"}, {"1", "0MI_IDX"}, 14.0, log2(1.4834790899372283)},
+        {{"1"}, {"1", "0MI_IDX"}, 15.0, log2(1.4449827655296232)},
+        {{"1"}, {"1", "0MI_IDX"}, INFINITY, log2(1.0)}
+    };
+
+    vector<string> vars = {"0MC", "0MI_IDX", "0T", "1"};
+
+    double p = pow(2, simple_dc_bound(dcs, vars));
+    assert(abs(p-7017) < 1);
+}
+
+// Add other test functions similarly
 int main() {
     test_lp1();
-    LpNormLP<string> lp;
-    lp.add_flow_var(0, {"a"}, {"b"}, 0.0, 1.0);
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound1();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound2();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound3();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound_JOB_Q1();
+    cout << string(80, '-') << endl;
     return 0;
 }
