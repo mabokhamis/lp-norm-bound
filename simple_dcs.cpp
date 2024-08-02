@@ -320,7 +320,7 @@ inline string flow_conservation_con_name(int t, const set<T> &Z) {
 inline string dc_var_name(int i) {
     return "a" + to_string(i);
 }
-// However, in Release mode, we skip name generation and just return empty strings
+// However, in Release mode, we skip name generation and just use empty strings
 #else
 template <typename T>
 inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
@@ -549,8 +549,8 @@ double simple_dc_bound(const vector<DC<string>> &dcs, const vector<string> &vars
     LpNormLP<string> lp(dcs, vars);
     // In release mode, we convert the strings to integers
     #else
-    auto int_dcs_and_vars = transform_dcs_to_int(dcs, vars);
-    LpNormLP<int> lp(int_dcs_and_vars.first, int_dcs_and_vars.second);
+    auto int_dcs_vars = transform_dcs_to_int(dcs, vars);
+    LpNormLP<int> lp(int_dcs_vars.first, int_dcs_vars.second);
     #endif
     lp.construct_graph();
     lp.add_flow_constraints();
