@@ -171,6 +171,10 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // Create a Highs instance
     Highs highs;
+    // Set the options to reduce verbosity
+    highs.setOptionValue("output_flag", false);  // Disables all output
+    highs.setOptionValue("log_to_console", false);  // Specifically disables logging to the console
+    highs.setOptionValue("message_level", 0);  // Disables all messages
     HighsStatus return_status;
 
     // Pass the model to HiGHS
@@ -190,7 +194,8 @@ pair<double,vector<double>> solve(const LP &p) {
 
     const HighsInfo& info = highs.getInfo();
     const double obj = info.objective_function_value;
-    // const bool has_values = info.primal_solution_status;
+    const bool has_values = info.primal_solution_status;
+    assert(has_values);
     const HighsSolution& solution = highs.getSolution();
 
     return make_pair(obj, solution.col_value);
@@ -577,14 +582,9 @@ void test_simple_dc_bound_JOB_Q1() {
 // Add other test functions similarly
 int main() {
     test_lp1();
-    cout << string(80, '-') << endl;
     test_simple_dc_bound1();
-    cout << string(80, '-') << endl;
     test_simple_dc_bound2();
-    cout << string(80, '-') << endl;
     test_simple_dc_bound3();
-    cout << string(80, '-') << endl;
     test_simple_dc_bound_JOB_Q1();
-    cout << string(80, '-') << endl;
     return 0;
 }
