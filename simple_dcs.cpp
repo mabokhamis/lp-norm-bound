@@ -1,12 +1,14 @@
 #include <iostream>
 #include <vector>
 #include <set>
+#include <unordered_set>
 #include <map>
 #include <unordered_map>
 #include <algorithm>
 #include <string>
 #include <cmath>
 #include <numeric>
+#include <tuple>
 #include <cassert>
 #include "Highs.h"
 
@@ -15,16 +17,16 @@ using namespace std;
 // A variable has a name, lower bound, and upper bound.
 struct Variable {
     const string name;
-    double lower_bound;
-    double upper_bound;
+    const double lower_bound;
+    const double upper_bound;
 };
 
 // A constraint has a name, lower bound, upper bound, and a sum of variables. The sum is
 // represented as a dictionary from variable names to coefficients.
 struct Constraint {
     const string name;
-    double lower_bound;
-    double upper_bound;
+    const double lower_bound;
+    const double upper_bound;
     unordered_map<int, double> sum;
 };
 
@@ -32,7 +34,7 @@ struct Constraint {
 // and a sum indicating the objective function. The sum is represented as a dictionary from
 // variables names to coefficients.
 struct Objective {
-    bool maximize;
+    const bool maximize;
     unordered_map<int, double> sum;
 
     Objective(bool maximize_) : maximize(maximize_) {}
@@ -88,8 +90,6 @@ ostream& print_sum(
     }
     bool first = true;
     for (const auto& t : sorted_sum) {
-        if (t.second == 0)
-            continue;
         if (!first)
             os << " + ";
         first = false;
@@ -226,7 +226,152 @@ void test_lp1() {
     assert(abs(val[t] - 2.0) < 1e-7);
 }
 
+/******************************************************************************************/
+
+// A representation of a bound on an Lp-norm of a degree sequence
+template <typename T>
+struct DC {
+    const set<T> X;
+    const set<T> Y;
+    const double p;
+    const double b;
+
+    DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
+        : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
+};
+
+template <typename T>
+set<T> set_union(const set<T>& X, const set<T>& Y) {
+    set<T> Z;
+    copy(X.begin(), X.end(), inserter(Z, Z.end()));
+    copy(Y.begin(), Y.end(), inserter(Z, Z.end()));
+    return Z;
+}
+
+inline string name(string s) {
+    return s;
+}
+
+inline string name(int i) {
+    return to_string(i);
+}
+
+// Given a set `X`, convert each element to a string and concatenate the strings.
+template <typename T>
+inline string set_name(const set<T> &X) {
+    string s = "{";
+    bool first = true;
+    for (const auto &x : X) {
+        if (!first)
+            s += ",";
+        first = false;
+        s += name(x);
+    }
+    s += "}";
+    return s;
+}
+
+template <typename T>
+ostream& operator<<(ostream& os, const DC<T>& dc) {
+    os << "log_2 ||deg(" << set_name(dc.Y) << "|" << set_name(dc.X) << ")||_" <<
+        dc.p << " <= " << dc.b;
+    return os;
+}
+
+template <typename T>
+inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
+    return "f" + to_string(t) + "_" + set_name(X) + "->" + set_name(Y);
+}
+
+template <typename T>
+inline string flow_capacity_con_name(int t, const set<T> &X, const set<T> &Y) {
+    return "c" + to_string(t) + "_" + set_name(X) + "->" + set_name(Y);
+}
+
+template <typename T>
+inline string flow_conservation_con_name(int t, const set<T> &Z) {
+    return "e" + to_string(t) + "_" + set_name(Z);
+}
+
+inline string dc_var_name(int i) {
+    return "a" + to_string(i);
+}
+
+template <typename T>
+struct LpNormLP {
+    LP lp;
+
+    map<tuple<int, const set<T>, const set<T>>, int> flow_var;
+    map<tuple<int, const set<T>, const set<T>>, int> flow_capacity_con;
+    map<tuple<int, const set<T>, const set<T>>, int> flow_conservation_con;
+    map<int, int> dc_var;
+
+    LpNormLP() : lp(false) {}
+
+    int add_flow_var(
+        int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
+    ) {
+        auto key = make_tuple(t, X, Y);
+        auto it = flow_var.find(key);
+        assert(it == flow_var.end());
+        int v = lp.add_variable(flow_var_name(t, X, Y), lower_bound, upper_bound);
+        flow_var.insert({key, v});
+        return v;
+    }
+
+    inline int get_flow_var(int t, const set<T>& X, const set<T>& Y) {
+        auto key = make_tuple(t, X, Y);
+        return flow_var[key];
+    }
+
+    int add_flow_capacity_con(
+        int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
+    ) {
+        auto key = make_tuple(t, X, Y);
+        auto it = flow_capacity_con.find(key);
+        assert(it == flow_capacity_con.end());
+        int c = lp.add_constraint(flow_capacity_con_name(t, X, Y), lower_bound, upper_bound);
+        flow_capacity_con.insert({key, c});
+        return c;
+    }
+
+    inline int get_flow_capacity_con(int t, const set<T>& X, const set<T>& Y) {
+        auto key = make_tuple(t, X, Y);
+        return flow_capacity_con[key];
+    }
+
+    int add_flow_conservation_con(
+        int t, const set<T>& Z, double lower_bound, double upper_bound
+    ) {
+        auto key = make_tuple(t, Z);
+        auto it = flow_conservation_con.find(key);
+        assert(it == flow_conservation_con.end());
+        int c = lp.add_constraint(flow_conservation_con_name(t, Z), lower_bound, upper_bound);
+        flow_conservation_con.insert({key, c});
+        return c;
+    }
+
+    inline int get_flow_conservation_con(int t, const set<T>& Z) {
+        auto key = make_tuple(t, Z);
+        return flow_conservation_con[key];
+    }
+
+    int add_dc_var(int i, double lower_bound, double upper_bound) {
+        auto it = dc_var.find(i);
+        assert(it == dc_var.end());
+        int v = lp.add_variable(dc_var_name(i), lower_bound, upper_bound);
+        dc_var.insert({i, v});
+        return v;
+    }
+
+    inline int get_dc_var(int i) {
+        return dc_var[i];
+    }
+};
+
 int main() {
     test_lp1();
+    LpNormLP<string> lp;
+    lp.add_flow_var(0, {"a"}, {"b"}, 0.0, 1.0);
     return 0;
 }
