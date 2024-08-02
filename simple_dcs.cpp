@@ -93,7 +93,7 @@ ostream& print_sum(
         if (!first)
             os << " + ";
         first = false;
-        os << t.second << " " << t.first;
+        os << t.second << "*" << t.first;
     }
     return os;
 }
@@ -215,6 +215,7 @@ void test_lp1() {
     lp.add_to_objective(y, 1.0);
     lp.add_to_objective(z, 1.0);
     lp.add_to_objective(t, 1.0);
+    cout << lp << endl;
     auto sol = solve(lp);
     auto& obj = sol.first;
     auto& val = sol.second;
