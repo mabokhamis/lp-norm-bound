@@ -275,10 +275,6 @@ struct DC {
 
     DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
         : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
-
-    bool is_simple() const {
-        return X.size() <= 1;
-    }
 };
 
 // In Debug mode, we generate meaningful names for variables and constraints.
@@ -359,6 +355,8 @@ struct LpNormLP {
     const vector<T> vars;
 
     vector<DC<T>> simple_dcs;
+    vector<DC<T>> acyclic_dcs;
+    bool use_only_chain_bound;
 
     LP lp;
     map<tuple<int, const set<T>, const set<T>>, int> flow_var;
@@ -369,13 +367,19 @@ struct LpNormLP {
     set<set<T>> vertices;
     set<pair<set<T>, set<T>>> edges;
 
-    LpNormLP(const vector<DC<T>>& dcs_, const vector<T>& vars_)
-    :dcs(dcs_), vars(vars_), lp(false) {
+    LpNormLP(
+        const vector<DC<T>>& dcs_, const vector<T>& vars_, bool use_only_chain_bound_
+    ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_), lp(false) {
         for (const auto& dc : dcs) {
-            if (dc.is_simple()) {
+            if (is_simple(dc))
                 simple_dcs.push_back(dc);
-            }
+            else
+                acyclic_dcs.push_back(dc);
         }
+    }
+
+    bool is_simple(const DC<T>& dc) {
+        return !use_only_chain_bound && dc.X.size() <= 1;
     }
 
     int add_flow_var(
@@ -477,8 +481,9 @@ struct LpNormLP {
         for (size_t t = 0; t < vars.size(); ++t) {
             // For every vertex `Z`, add a flow conservation constraint
             for (const auto &Z : vertices) {
-                double lower_bound = (Z.size() == 1 && *Z.begin() == vars[t]) ?
-                    1.0 : (Z.size() == 0 ? -1.0 : 0.0);
+                if (Z.empty())
+                    continue;
+                double lower_bound = (Z.size() == 1 && *Z.begin() == vars[t]) ? 1.0 : 0.0;
                 add_flow_conservation_con(t, Z, lower_bound, INFINITY);
             }
 
@@ -489,8 +494,10 @@ struct LpNormLP {
                 double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
                 double upper_bound = INFINITY;
                 int ft_X_Y = add_flow_var(t, X, Y, lower_bound, upper_bound);
-                lp.add_to_constraint(get_flow_conservation_con(t, X), ft_X_Y, -1.0);
-                lp.add_to_constraint(get_flow_conservation_con(t, Y), ft_X_Y, 1.0);
+                if (!X.empty())
+                    lp.add_to_constraint(get_flow_conservation_con(t, X), ft_X_Y, -1.0);
+                if (!Y.empty())
+                    lp.add_to_constraint(get_flow_conservation_con(t, Y), ft_X_Y, 1.0);
                 if (X.size() <= Y.size()) {
                     int ct_X_Y = add_flow_capacity_con(t, X, Y, 0.0, INFINITY);
                     lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0);
@@ -500,7 +507,7 @@ struct LpNormLP {
             for (size_t i = 0; i < dcs.size(); ++i) {
                 int ai = get_dc_var(i);
                 // For simple DCs, add coefficients to capacity constraints
-                if (dcs[i].is_simple()) {
+                if (is_simple(dcs[i])) {
                     if (dcs[i].X.size() != dcs[i].Y.size()) {
                         lp.add_to_constraint(
                             get_flow_capacity_con(t, dcs[i].X, dcs[i].Y), ai, 1.0);
@@ -573,7 +580,14 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 }
 #endif
 
-double flow_bound(const vector<DC<string>> &dcs, const vector<string> &vars) {
+double flow_bound(
+    const vector<DC<string>> &dcs,
+    const vector<string> &vars,
+
+    // This optional parameter is for testing purposes only. If set to true, it will restrict
+    // the flow bound to become the weaker chain bound.
+    bool use_only_chain_bound = false
+) {
     // In debug mode, we operate directly on the given strings used to represent variables
     #ifdef DEBUG
     cout << "Degree Constraints:" << endl;
@@ -581,11 +595,11 @@ double flow_bound(const vector<DC<string>> &dcs, const vector<string> &vars) {
         cout << "    " << dc << endl;
     }
     cout << endl;
-    LpNormLP<string> lp(dcs, vars);
+    LpNormLP<string> lp(dcs, vars, use_only_chain_bound);
     // In release mode, we convert the strings to integers
     #else
     auto int_dcs_vars = transform_dcs_to_int(dcs, vars);
-    LpNormLP<int> lp(int_dcs_vars.first, int_dcs_vars.second);
+    LpNormLP<int> lp(int_dcs_vars.first, int_dcs_vars.second, use_only_chain_bound);
     #endif
     lp.construct_graph();
     lp.add_flow_constraints();
@@ -601,7 +615,10 @@ void test_flow_bound1() {
         { {}, {"B", "C"}, 1, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p = flow_bound(dcs, vars);
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 1.5) < 1e-7);
+    p = flow_bound(dcs, vars, true);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -612,7 +629,10 @@ void test_flow_bound2() {
         { {}, {"B", "C"}, INFINITY, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p = flow_bound(dcs, vars);
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 1.5) < 1e-7);
+    p = flow_bound(dcs, vars, true);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -623,7 +643,10 @@ void test_flow_bound3() {
         { {"C"}, {"A"}, 2, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p = flow_bound(dcs, vars);
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 2.0) < 1e-7);
+    p = flow_bound(dcs, vars, true);
     assert(abs(p - 2.0) < 1e-7);
 }
 
@@ -636,7 +659,10 @@ void test_flow_bound4() {
         { {"y", "z"}, {"t"}, INFINITY, 0}
     };
     vector<string> vars = { "x", "y", "z", "u", "t" };
-    double p = flow_bound(dcs, vars);
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 1.5) < 1e-7);
+    p = flow_bound(dcs, vars, true);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -709,7 +735,10 @@ void test_flow_bound_JOB_Q1() {
 
     vector<string> vars = {"0MC", "0MI_IDX", "0T", "1"};
 
-    double p = pow(2, flow_bound(dcs, vars));
+    double p;
+    p = pow(2, flow_bound(dcs, vars, false));
+    assert(abs(p-7017) < 1);
+    p = pow(2, flow_bound(dcs, vars, true));
     assert(abs(p-7017) < 1);
 }
 
@@ -719,7 +748,7 @@ int main() {
     test_flow_bound1();
     test_flow_bound2();
     test_flow_bound3();
-    test_flow_bound_JOB_Q1();
     test_flow_bound4();
+    test_flow_bound_JOB_Q1();
     return 0;
 }
