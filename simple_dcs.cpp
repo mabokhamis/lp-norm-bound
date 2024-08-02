@@ -254,7 +254,14 @@ set<T> set_union(const set<T>& X, const set<T>& Y) {
 }
 
 template <typename T>
-bool is_subset(const set<T> &X, const set<T> &Y) {
+set<T> set_difference(const set<T>& X, const set<T>& Y) {
+    set<T> Z;
+    set_difference(X.begin(), X.end(), Y.begin(), Y.end(), inserter(Z, Z.end()));
+    return Z;
+}
+
+template <typename T>
+bool is_subset(const set<T>& X, const set<T>& Y) {
     return includes(Y.begin(), Y.end(), X.begin(), X.end());
 }
 
@@ -268,6 +275,10 @@ struct DC {
 
     DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
         : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
+
+    bool is_simple() const {
+        return X.size() <= 1;
+    }
 };
 
 // In Debug mode, we generate meaningful names for variables and constraints.
@@ -347,6 +358,8 @@ struct LpNormLP {
     const vector<DC<T>> dcs;
     const vector<T> vars;
 
+    vector<DC<T>> simple_dcs;
+
     LP lp;
     map<tuple<int, const set<T>, const set<T>>, int> flow_var;
     map<tuple<int, const set<T>, const set<T>>, int> flow_capacity_con;
@@ -356,8 +369,14 @@ struct LpNormLP {
     set<set<T>> vertices;
     set<pair<set<T>, set<T>>> edges;
 
-    LpNormLP(const vector<DC<T>>& dcs_, const vector<T>& vars_) :
-        dcs(dcs_), vars(vars_), lp(false) {}
+    LpNormLP(const vector<DC<T>>& dcs_, const vector<T>& vars_)
+    :dcs(dcs_), vars(vars_), lp(false) {
+        for (const auto& dc : dcs) {
+            if (dc.is_simple()) {
+                simple_dcs.push_back(dc);
+            }
+        }
+    }
 
     int add_flow_var(
         int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
@@ -429,9 +448,7 @@ struct LpNormLP {
     }
 
     void construct_graph() {
-        for (auto &dc : dcs) {
-            // This method expects that all DCs are simple
-            assert(dc.X.size() <= 1);
+        for (auto &dc : simple_dcs) {
             // Add edge from X to Y
             add_edge(dc.X, dc.Y);
 
@@ -441,7 +458,7 @@ struct LpNormLP {
         }
 
         // Add edges from Y to {} and from Y to {y} for every y in Y
-        for (auto &dc : dcs) {
+        for (auto &dc : simple_dcs) {
             add_edge(dc.Y, {});
             for (auto &y : dc.Y) {
                 add_edge(dc.Y, {y});
@@ -451,7 +468,6 @@ struct LpNormLP {
 
     void add_flow_constraints() {
         for (size_t i = 0; i < dcs.size(); ++i) {
-            assert(dcs[i].X.size() <= 1); // Only simple degree constraints are supported
             add_dc_var(i, 0.0, INFINITY);
         }
 
@@ -479,14 +495,31 @@ struct LpNormLP {
                 }
             }
 
-            // Add coefficients to capacity constraints
             for (size_t i = 0; i < dcs.size(); ++i) {
                 int ai = get_dc_var(i);
-                if (dcs[i].X.size() != dcs[i].Y.size()) {
-                    lp.add_to_constraint(get_flow_capacity_con(t, dcs[i].X, dcs[i].Y), ai, 1.0);
+                // For simple DCs, add coefficients to capacity constraints
+                if (dcs[i].is_simple()) {
+                    if (dcs[i].X.size() != dcs[i].Y.size()) {
+                        lp.add_to_constraint(
+                            get_flow_capacity_con(t, dcs[i].X, dcs[i].Y), ai, 1.0);
+                    }
+                    if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
+                        lp.add_to_constraint(
+                            get_flow_capacity_con(t, {}, dcs[i].X), ai, 1.0 / dcs[i].p);
+                    }
                 }
-                if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
-                    lp.add_to_constraint(get_flow_capacity_con(t, {}, dcs[i].X), ai, 1.0 / dcs[i].p);
+                // For acyclic DCs, add coefficients to flow conservation constraints
+                else {
+                    set<T> Z = set_difference(dcs[i].Y, dcs[i].X);
+                    for (const auto& z : Z) {
+                        int e_z = get_flow_conservation_con(t, {z});
+                        lp.add_to_constraint(e_z, ai, 1.0);
+                    }
+                    if (dcs[i].p != INFINITY)
+                        for (const auto& x : dcs[i].X) {
+                            int e_x = get_flow_conservation_con(t, {x});
+                            lp.add_to_constraint(e_x, ai, 1.0 / dcs[i].p);
+                        }
                 }
             }
         }
@@ -538,7 +571,7 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 }
 #endif
 
-double simple_dc_bound(const vector<DC<string>> &dcs, const vector<string> &vars) {
+double flow_bound(const vector<DC<string>> &dcs, const vector<string> &vars) {
     // In debug mode, we operate directly on the given strings used to represent variables
     #ifdef DEBUG
     cout << "Degree Constraints:" << endl;
@@ -558,41 +591,41 @@ double simple_dc_bound(const vector<DC<string>> &dcs, const vector<string> &vars
     return solve(lp.lp).first;
 }
 
-// Testcases for the simple_dc_bound function
-void test_simple_dc_bound1() {
+// Testcases for the flow_bound function
+void test_flow_bound1() {
     vector<DC<string>> dcs = {
         { {}, {"A", "B"}, 1, 1 },
         { {}, {"A", "C"}, 1, 1 },
         { {}, {"B", "C"}, 1, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p = simple_dc_bound(dcs, vars);
+    double p = flow_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
-void test_simple_dc_bound2() {
+void test_flow_bound2() {
     vector<DC<string>> dcs = {
         { {}, {"A", "B"}, INFINITY, 1 },
         { {}, {"A", "C"}, INFINITY, 1 },
         { {}, {"B", "C"}, INFINITY, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p = simple_dc_bound(dcs, vars);
+    double p = flow_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
-void test_simple_dc_bound3() {
+void test_flow_bound3() {
     vector<DC<string>> dcs = {
         { {"A"}, {"B"}, 2, 1 },
         { {"B"}, {"C"}, 2, 1 },
         { {"C"}, {"A"}, 2, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p = simple_dc_bound(dcs, vars);
+    double p = flow_bound(dcs, vars);
     assert(abs(p - 2.0) < 1e-7);
 }
 
-void test_simple_dc_bound_JOB_Q1() {
+void test_flow_bound_JOB_Q1() {
     vector<DC<string>> dcs = {
         {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
         {{"1"}, {"0MC", "1"}, 2.0, log2(1685.8359943956589)},
@@ -661,16 +694,16 @@ void test_simple_dc_bound_JOB_Q1() {
 
     vector<string> vars = {"0MC", "0MI_IDX", "0T", "1"};
 
-    double p = pow(2, simple_dc_bound(dcs, vars));
+    double p = pow(2, flow_bound(dcs, vars));
     assert(abs(p-7017) < 1);
 }
 
 // Add other test functions similarly
 int main() {
     test_lp1();
-    test_simple_dc_bound1();
-    test_simple_dc_bound2();
-    test_simple_dc_bound3();
-    test_simple_dc_bound_JOB_Q1();
+    test_flow_bound1();
+    test_flow_bound2();
+    test_flow_bound3();
+    test_flow_bound_JOB_Q1();
     return 0;
 }
