@@ -14,6 +14,11 @@
 
 using namespace std;
 
+//==========================================================================================
+// This macro should be left undefined unless you want to enable debugging
+// #define DEBUG
+//==========================================================================================
+
 // A variable has a name, lower bound, and upper bound.
 struct Variable {
     const string name;
@@ -63,7 +68,7 @@ public:
 
     // Add `coefficient * variable` to the given constraint
     void add_to_constraint(int c, int v, double a) {
-        constraints[c].sum[v] += a;
+        constraints.at(c).sum[v] += a;
     }
 
     // Add `coefficient * variable` to the objective
@@ -72,6 +77,7 @@ public:
     }
 };
 
+#ifdef DEBUG
 ostream& operator<<(ostream& os, const Variable& v) {
     if (v.lower_bound != -INFINITY)
         os << v.lower_bound << " <= ";
@@ -111,6 +117,7 @@ ostream& print_constraint(
 }
 
 ostream& operator<<(ostream& os, const LP& lp) {
+    os << "Linear Program:" << endl;
     os << (lp.objective.maximize ? "maximize" : "minimize") << " ";
     print_sum(os, lp.objective.sum, lp.variables) << endl;
     os << "subject to" << endl;
@@ -126,9 +133,13 @@ ostream& operator<<(ostream& os, const LP& lp) {
     }
     return os;
 }
+#endif
 
 // Convert an LP to a HiGHs LpProblem
 pair<double,vector<double>> solve(const LP &p) {
+    #ifdef DEBUG
+    cout << p << endl;
+    #endif
     int n = p.variables.size();
     int m = p.constraints.size();
 
@@ -171,10 +182,12 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // Create a Highs instance
     Highs highs;
+    #ifndef DEBUG
     // Set the options to reduce verbosity
     highs.setOptionValue("output_flag", false);  // Disables all output
     highs.setOptionValue("log_to_console", false);  // Specifically disables logging to the console
     highs.setOptionValue("message_level", 0);  // Disables all messages
+    #endif
     HighsStatus return_status;
 
     // Pass the model to HiGHS
@@ -257,6 +270,8 @@ struct DC {
         : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
 };
 
+// In Debug mode, we generate meaningful names for variables and constraints.
+#ifdef DEBUG
 inline string name(string s) {
     return s;
 }
@@ -305,6 +320,27 @@ inline string flow_conservation_con_name(int t, const set<T> &Z) {
 inline string dc_var_name(int i) {
     return "a" + to_string(i);
 }
+// However, in Release mode, we skip name generation and just return empty strings
+#else
+template <typename T>
+inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
+    return "";
+}
+
+template <typename T>
+inline string flow_capacity_con_name(int t, const set<T> &X, const set<T> &Y) {
+    return "";
+}
+
+template <typename T>
+inline string flow_conservation_con_name(int t, const set<T> &Z) {
+    return "";
+}
+
+inline string dc_var_name(int i) {
+    return "";
+}
+#endif
 
 template <typename T>
 struct LpNormLP {
@@ -318,7 +354,7 @@ struct LpNormLP {
     map<int, int> dc_var;
 
     set<set<T>> vertices;
-    set<pair<set<string>, set<string>>> edges;
+    set<pair<set<T>, set<T>>> edges;
 
     LpNormLP(const vector<DC<T>>& dcs_, const vector<T>& vars_) :
         dcs(dcs_), vars(vars_), lp(false) {}
@@ -336,7 +372,7 @@ struct LpNormLP {
 
     inline int get_flow_var(int t, const set<T>& X, const set<T>& Y) {
         auto key = make_tuple(t, X, Y);
-        return flow_var[key];
+        return flow_var.at(key);
     }
 
     int add_flow_capacity_con(
@@ -352,7 +388,7 @@ struct LpNormLP {
 
     inline int get_flow_capacity_con(int t, const set<T>& X, const set<T>& Y) {
         auto key = make_tuple(t, X, Y);
-        return flow_capacity_con[key];
+        return flow_capacity_con.at(key);
     }
 
     int add_flow_conservation_con(
@@ -368,7 +404,7 @@ struct LpNormLP {
 
     inline int get_flow_conservation_con(int t, const set<T>& Z) {
         auto key = make_tuple(t, Z);
-        return flow_conservation_con[key];
+        return flow_conservation_con.at(key);
     }
 
     int add_dc_var(int i, double lower_bound, double upper_bound) {
@@ -380,7 +416,7 @@ struct LpNormLP {
     }
 
     inline int get_dc_var(int i) {
-        return dc_var[i];
+        return dc_var.at(i);
     }
 
     void add_edge(const set<T>& X, const set<T>& Y) {
@@ -463,9 +499,59 @@ struct LpNormLP {
     }
 };
 
-template <typename T>
-double simple_dc_bound(const vector<DC<T>> &dcs, const vector<T> &vars) {
+// In Release mode, we convert the strings used to represent variables to integers
+#ifndef DEBUG
+// Convert the type of the given DC vars from T1 to T2, and return the resulting DC
+template <typename T1, typename T2>
+DC<T2> transform_DC(const DC<T1>& dc, const map<T1, T2>& f) {
+    set<T2> new_X, new_Y;
+
+    for (const auto& x : dc.X) {
+        new_X.insert(f.at(x));
+    }
+    for (const auto& y : dc.Y) {
+        new_Y.insert(f.at(y));
+    }
+    return DC<T2>(new_X, new_Y, dc.p, dc.b);
+}
+
+// Convert DCs from string to integer representation
+pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
+    const vector<DC<string>>& dcs, const vector<string>& vars
+) {
+    map<string, int> var_map;
+    for (size_t i = 0; i < vars.size(); ++i) {
+        var_map[vars[i]] = i;
+    }
+
+    vector<DC<int>> new_dcs;
+    vector<int> new_vars;
+    for (const auto& dc : dcs) {
+        new_dcs.push_back(transform_DC(dc, var_map));
+    }
+
+    for (const auto& v : vars) {
+        new_vars.push_back(var_map[v]);
+    }
+
+    return make_pair(new_dcs, new_vars);
+}
+#endif
+
+double simple_dc_bound(const vector<DC<string>> &dcs, const vector<string> &vars) {
+    // In debug mode, we operate directly on the given strings used to represent variables
+    #ifdef DEBUG
+    cout << "Degree Constraints:" << endl;
+    for (const auto& dc : dcs) {
+        cout << "    " << dc << endl;
+    }
+    cout << endl;
     LpNormLP<string> lp(dcs, vars);
+    // In release mode, we convert the strings to integers
+    #else
+    auto int_dcs_and_vars = transform_dcs_to_int(dcs, vars);
+    LpNormLP<int> lp(int_dcs_and_vars.first, int_dcs_and_vars.second);
+    #endif
     lp.construct_graph();
     lp.add_flow_constraints();
     lp.set_objective();
