@@ -448,6 +448,8 @@ struct LpNormLP {
     }
 
     void construct_graph() {
+        for (auto v : vars)
+            vertices.insert({v});
         for (auto &dc : simple_dcs) {
             // Add edge from X to Y
             add_edge(dc.X, dc.Y);
@@ -625,6 +627,19 @@ void test_flow_bound3() {
     assert(abs(p - 2.0) < 1e-7);
 }
 
+void test_flow_bound4() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 1 },
+        { {}, {"y", "z"}, 1, 1 },
+        { {}, {"x", "z"}, 1, 1 },
+        { {"x", "z"}, {"u"}, INFINITY, 0},
+        { {"y", "z"}, {"t"}, INFINITY, 0}
+    };
+    vector<string> vars = { "x", "y", "z", "u", "t" };
+    double p = flow_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
+}
+
 void test_flow_bound_JOB_Q1() {
     vector<DC<string>> dcs = {
         {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
@@ -705,5 +720,6 @@ int main() {
     test_flow_bound2();
     test_flow_bound3();
     test_flow_bound_JOB_Q1();
+    test_flow_bound4();
     return 0;
 }
