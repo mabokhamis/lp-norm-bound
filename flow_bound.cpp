@@ -23,7 +23,7 @@ using namespace std;
 
 /******************************************************************************************/
 // The following macro should be left undefined unless you want to enable debug mode:
-// #define DEBUG
+// #define DEBUG_FLOW_BOUND
 /******************************************************************************************/
 
 
@@ -89,7 +89,7 @@ public:
     }
 };
 
-#ifdef DEBUG
+#ifdef DEBUG_FLOW_BOUND
 ostream& operator<<(ostream& os, const Variable& v) {
     if (v.lower_bound != -INFINITY)
         os << v.lower_bound << " <= ";
@@ -149,7 +149,7 @@ ostream& operator<<(ostream& os, const LP& lp) {
 
 // Convert an LP to a HiGHs LpProblem
 pair<double,vector<double>> solve(const LP &p) {
-    #ifdef DEBUG
+    #ifdef DEBUG_FLOW_BOUND
     cout << p << endl;
     #endif
     int n = p.variables.size();
@@ -194,7 +194,7 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // Create a Highs instance
     Highs highs;
-    #ifndef DEBUG
+    #ifndef DEBUG_FLOW_BOUND
     // Set the options to reduce verbosity
     highs.setOptionValue("output_flag", false);  // Disables all output
     highs.setOptionValue("log_to_console", false);  // Specifically disables logging to the console
@@ -301,7 +301,7 @@ struct DC {
 };
 
 // In Debug mode, we generate meaningful names for variables and constraints.
-#ifdef DEBUG
+#ifdef DEBUG_FLOW_BOUND
 inline string name(string s) {
     return s;
 }
@@ -668,7 +668,7 @@ struct LpNormLP {
 };
 
 // In Release mode, we convert the strings used to represent variables to integers
-#ifndef DEBUG
+#ifndef DEBUG_FLOW_BOUND
 // Convert the type of the given DC vars from T1 to T2, and return the resulting DC
 template <typename T1, typename T2>
 DC<T2> transform_DC(const DC<T1>& dc, const map<T1, T2>& f) {
@@ -718,7 +718,7 @@ double flow_bound(
     bool use_only_chain_bound = false
 ) {
     // In debug mode, we operate directly on the given strings used to represent variables
-    #ifdef DEBUG
+    #ifdef DEBUG_FLOW_BOUND
     cout << "Degree Constraints:" << endl;
     for (const auto& dc : dcs) {
         cout << "    " << dc << endl;
