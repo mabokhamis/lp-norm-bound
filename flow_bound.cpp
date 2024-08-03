@@ -878,6 +878,21 @@ void test_flow_bound8() {
     assert(abs(p - 3.5) < 1e-7);
 }
 
+void test_flow_bound9() {
+    vector<DC<string>> dcs = {
+        { {"x"}, {"y"}, 3, 2.7 },
+        { {"y"}, {"z"}, 3, 2.7 },
+        { {"z"}, {"t"}, 3, 2.7 },
+        { {"t"}, {"x"}, 3, 2.7 },
+    };
+    vector<string> vars = { "x", "y", "z", "t" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 2.7 * 3) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(abs(p - 2.7 * (4 + 2.0/3.0)) < 1e-7);
+}
+
 void test_flow_bound_infeasible() {
     vector<DC<string>> dcs = {
         { {"x"}, {"y"}, INFINITY, 0 },
@@ -1074,6 +1089,7 @@ int main() {
     test_flow_bound6();
     test_flow_bound7();
     test_flow_bound8();
+    test_flow_bound9();
     test_flow_bound_infeasible();
     test_flow_bound_JOB_Q1();
 
