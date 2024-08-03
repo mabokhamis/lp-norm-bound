@@ -431,6 +431,8 @@ struct LpNormLP {
     LpNormLP(
         const vector<DC<T>>& dcs_, const vector<T>& vars_, bool use_only_chain_bound_
     ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_), lp(false) {
+        // TODO: If all degrees are acyclic (including the simple ones), then is it more
+        // efficient to use the chain bound?
         for (const auto& dc : dcs)
             if (is_simple(dc))
                 simple_dcs.push_back(dc);
