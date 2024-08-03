@@ -14,9 +14,20 @@
 
 using namespace std;
 
-//==========================================================================================
-// This macro should be left undefined unless you want to enable debugging
+
+/******************************************************************************************/
+// NOTE: The main entry point to this file is the `flow_bound` function below
+/******************************************************************************************/
+
+
+/******************************************************************************************/
+// The following macro should be left undefined unless you want to enable debug mode:
 // #define DEBUG
+/******************************************************************************************/
+
+
+//==========================================================================================
+// Generic interface for building and solving LPs using HiGHS
 //==========================================================================================
 
 // A variable has a name, lower bound, and upper bound.
@@ -214,6 +225,7 @@ pair<double,vector<double>> solve(const LP &p) {
     return make_pair(obj, solution.col_value);
 }
 
+// A testcase for the LP interface
 void test_lp1() {
     LP lp(true);
     int x = lp.add_variable("x", 0.0, INFINITY);
@@ -243,7 +255,11 @@ void test_lp1() {
     assert(abs(val[t] - 2.0) < 1e-7);
 }
 
-/******************************************************************************************/
+
+
+//==========================================================================================
+// Generic utility functions:
+//==========================================================================================
 
 template <typename T>
 set<T> set_union(const set<T>& X, const set<T>& Y) {
@@ -264,6 +280,12 @@ template <typename T>
 bool is_subset(const set<T>& X, const set<T>& Y) {
     return includes(Y.begin(), Y.end(), X.begin(), X.end());
 }
+
+
+
+//==========================================================================================
+// The flow bound implementation with Lp-norm constraints
+//==========================================================================================
 
 // A representation of a bound on an Lp-norm of a degree sequence
 template <typename T>
@@ -395,6 +417,7 @@ pair<bool,vector<T>> approximate_topological_sort(
     return {acyclic, order};
 }
 
+// Instead of a directed multi-graph, now we are given a set of DCs
 template <typename T>
 pair<bool,vector<T>> approximate_topological_sort(
     const vector<T>& V, const vector<DC<T>>& dcs
@@ -687,7 +710,12 @@ double flow_bound(
     return solve(lp.lp).first;
 }
 
+
+
+//==========================================================================================
 // Testcases for the flow_bound function
+//==========================================================================================
+
 void test_flow_bound1() {
     vector<DC<string>> dcs = {
         { {}, {"A", "B"}, 1, 1 },
@@ -838,14 +866,116 @@ void test_flow_bound_JOB_Q1() {
     assert(abs(p-7017) < 1);
 }
 
-// Add other test functions similarly
+
+
+//==========================================================================================
+// Unit tests for approximate_topological_sort()
+//==========================================================================================
+
+void test_approximate_topological_sort1() {
+    vector<string> V = {"A", "B", "C", "D"};
+    vector<pair<string, string>> E = {
+        {"A", "C"},
+        {"A", "D"},
+        {"C", "B"},
+        {"D", "B"},
+    };
+    auto p = approximate_topological_sort(V, E);
+    assert(p.first == true);
+    assert(p.second == vector<string>({"A", "D", "C", "B"}));
+}
+
+void test_approximate_topological_sort2() {
+    vector<string> V = {"A", "B", "C", "D"};
+    vector<pair<string, string>> E = {
+        {"A", "D"},
+        {"D", "B"},
+        {"B", "C"},
+    };
+    auto p = approximate_topological_sort(V, E);
+    assert(p.first == true);
+    assert(p.second == vector<string>({"A", "D", "B", "C"}));
+}
+
+void test_approximate_topological_sort3() {
+    vector<string> V = {"A", "B", "C", "D"};
+    vector<pair<string, string>> E = {
+        {"A", "B"},
+        {"B", "C"},
+        {"C", "D"},
+        {"D", "A"},
+    };
+    auto p = approximate_topological_sort(V, E);
+    assert(p.first == false);
+    assert(p.second == vector<string>({"B", "C", "D", "A"}));
+}
+
+void test_approximate_topological_sort4() {
+    vector<string> V = {"A", "B", "C", "D"};
+    vector<pair<string, string>> E = {
+        {"A", "B"},
+        {"A", "B"},
+        {"B", "C"},
+        {"B", "C"},
+        {"C", "D"},
+        {"C", "D"},
+        {"D", "A"},
+    };
+    auto p = approximate_topological_sort(V, E);
+    assert(p.first == false);
+    assert(p.second == vector<string>({"A", "B", "C", "D"}));
+}
+
+void test_approximate_topological_sort5() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 1 },
+        { {}, {"y", "z"}, 1, 1 },
+        { {}, {"x", "z"}, 1, 1 },
+        { {"x", "z"}, {"u"}, INFINITY, 0},
+        { {"y", "z"}, {"t"}, INFINITY, 0}
+    };
+    vector<string> vars = { "x", "y", "z", "u", "t" };
+    auto p = approximate_topological_sort(vars, dcs);
+    assert(p.first == true);
+    assert(p.second == vector<string>({"z", "y", "x", "u", "t"}));
+}
+
+void test_approximate_topological_sort6() {
+        vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 1 },
+        { {}, {"y", "z"}, 1, 1 },
+        { {}, {"z", "u"}, 1, 1 },
+        { {"x", "z"}, {"u"}, INFINITY, 0},
+        { {"y", "u"}, {"x"}, INFINITY, 0}
+    };
+    vector<string> vars = { "x", "y", "z", "u" };
+    auto p = approximate_topological_sort(vars, dcs);
+    assert(p.first == false);
+    assert(p.second == vector<string>({"z", "y", "x", "u"}));
+}
+
+
+
+//==========================================================================================
+// Run the test cases
+//==========================================================================================
+
 int main() {
     test_lp1();
+
     test_flow_bound1();
     test_flow_bound2();
     test_flow_bound3();
     test_flow_bound4();
     test_flow_bound5();
     test_flow_bound_JOB_Q1();
+
+    test_approximate_topological_sort1();
+    test_approximate_topological_sort2();
+    test_approximate_topological_sort3();
+    test_approximate_topological_sort4();
+    test_approximate_topological_sort5();
+    test_approximate_topological_sort6();
+
     return 0;
 }
