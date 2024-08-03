@@ -454,6 +454,9 @@ struct LpNormLP {
     LpNormLP(
         const vector<DC<T>>& dcs_, const vector<T>& vars_, bool use_only_chain_bound_
     ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_), lp(false) {
+
+        verify_input();
+
         // TODO: If all degrees are acyclic (including the simple ones), then is it more
         // efficient to use the chain bound?
         for (const auto& dc : dcs)
@@ -466,6 +469,23 @@ struct LpNormLP {
         var_order = p.second;
         for (size_t i = 0; i < var_order.size(); ++i) {
             var_index[var_order[i]] = i;
+        }
+    }
+
+    // Verify the validity of the input DCs and vars
+    void verify_input() {
+        set<T> var_set;
+        for (const auto& v : vars) {
+            // If the following assertion fails, this means that the input vars are not unique
+            assert(var_set.find(v) == var_set.end());
+
+            var_set.insert(v);
+        }
+        for (const auto& dc : dcs) {
+            assert(dc.p > 0);
+            assert(dc.b >= 0);
+            assert(is_subset(dc.X, var_set));
+            assert(is_subset(dc.Y, var_set));
         }
     }
 
