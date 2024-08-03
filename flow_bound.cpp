@@ -702,7 +702,9 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 }
 #endif
 
-// TODO: Verify that the input vars are unique and are a superset of the vars in the DCs
+/*************************************************/
+// NOTE: This is the main entry point to this file
+/*************************************************/
 double flow_bound(
     const vector<DC<string>> &dcs,
     const vector<string> &vars,
