@@ -349,14 +349,75 @@ inline string dc_var_name(int i) {
 }
 #endif
 
+// Given a directed multi-graph `G` (i.e. where we can have multiple edges `u -> v`):
+//  - if `G` is acyclic, return `true` along with a topological ordering of the vertices
+//  - otherwise, return `false` along an ordering of the vertices that is as close to a
+//    topological ordering as possible
+template <typename T>
+pair<bool,vector<T>> approximate_topological_sort(
+    const vector<T>& V, const vector<pair<T, T>>& E
+) {
+    map<T, int> out_degree;
+    map<T, vector<T>> in_edges;
+    for (auto& v : V)
+        out_degree[v] = 0;
+    for (auto& e : E) {
+        // Every edge must have both endpoints in V
+        assert(out_degree.find(e.first) != out_degree.end());
+        assert(out_degree.find(e.second) != out_degree.end());
+
+        out_degree[e.first]++;
+        in_edges[e.second].push_back(e.first);
+    }
+    set<pair<int, T>> Q;
+    for (auto& p : out_degree) {
+        Q.insert({p.second, p.first});
+    }
+    bool acyclic = true;
+    vector<T> order;
+    while (!Q.empty()) {
+        auto it = Q.begin();
+        if (it->first != 0)
+            acyclic = false;
+        T u = it->second;
+        order.push_back(u);
+        out_degree.erase(u);
+        Q.erase(it);
+        for (auto& v : in_edges[u])
+            if (out_degree.find(v) != out_degree.end()) {
+                assert(out_degree[v] > 0);
+                out_degree[v]--;
+                Q.erase({out_degree[v] + 1, v});
+                Q.insert({out_degree[v], v});
+            }
+    }
+    reverse(order.begin(), order.end());
+    return {acyclic, order};
+}
+
+template <typename T>
+pair<bool,vector<T>> approximate_topological_sort(
+    const vector<T>& V, const vector<DC<T>>& dcs
+) {
+    vector<pair<T, T>> E;
+    for (auto& dc : dcs)
+        for (auto& x : dc.X)
+            for (auto& y : dc.Y)
+                E.push_back({x, y});
+    return approximate_topological_sort(V, E);
+}
+
 template <typename T>
 struct LpNormLP {
     const vector<DC<T>> dcs;
     const vector<T> vars;
 
     vector<DC<T>> simple_dcs;
-    vector<DC<T>> acyclic_dcs;
+    vector<DC<T>> non_simple_dcs;
     bool use_only_chain_bound;
+    bool is_acyclic;
+    vector<T> var_order;
+    map<T, int> var_index;
 
     LP lp;
     map<tuple<int, const set<T>, const set<T>>, int> flow_var;
@@ -370,16 +431,32 @@ struct LpNormLP {
     LpNormLP(
         const vector<DC<T>>& dcs_, const vector<T>& vars_, bool use_only_chain_bound_
     ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_), lp(false) {
-        for (const auto& dc : dcs) {
+        for (const auto& dc : dcs)
             if (is_simple(dc))
                 simple_dcs.push_back(dc);
             else
-                acyclic_dcs.push_back(dc);
+                non_simple_dcs.push_back(dc);
+        auto p = approximate_topological_sort(vars, non_simple_dcs);
+        is_acyclic = p.first;
+        var_order = p.second;
+        for (size_t i = 0; i < var_order.size(); ++i) {
+            var_index[var_order[i]] = i;
         }
     }
 
     bool is_simple(const DC<T>& dc) {
         return !use_only_chain_bound && dc.X.size() <= 1;
+    }
+
+    DC<T> order_consistent_dc(const DC<T>& dc) {
+        int last_x = -1;
+        for (const auto& x : dc.X)
+            last_x = max(last_x, var_index.at(x));
+        set<T> new_Y;
+        for (const auto& y : dc.Y)
+            if (var_index.at(y) > last_x)
+                new_Y.insert(y);
+        return DC<T>(dc.X, new_Y, dc.p, dc.b);
     }
 
     int add_flow_var(
@@ -519,15 +596,16 @@ struct LpNormLP {
                 }
                 // For acyclic DCs, add coefficients to flow conservation constraints
                 else {
-                    set<T> Z = set_difference(dcs[i].Y, dcs[i].X);
+                    DC<T> dc = order_consistent_dc(dcs[i]);
+                    set<T> Z = set_difference(dc.Y, dc.X);
                     for (const auto& z : Z) {
                         int e_z = get_flow_conservation_con(t, {z});
                         lp.add_to_constraint(e_z, ai, 1.0);
                     }
-                    if (dcs[i].p != INFINITY)
-                        for (const auto& x : dcs[i].X) {
+                    if (dc.p != INFINITY)
+                        for (const auto& x : dc.X) {
                             int e_x = get_flow_conservation_con(t, {x});
-                            lp.add_to_constraint(e_x, ai, 1.0 / dcs[i].p);
+                            lp.add_to_constraint(e_x, ai, 1.0 / dc.p);
                         }
                 }
             }
@@ -647,7 +725,7 @@ void test_flow_bound3() {
     p = flow_bound(dcs, vars, false);
     assert(abs(p - 2.0) < 1e-7);
     p = flow_bound(dcs, vars, true);
-    assert(abs(p - 2.0) < 1e-7);
+    assert(abs(p - 3.0) < 1e-7);
 }
 
 void test_flow_bound4() {
