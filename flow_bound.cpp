@@ -10,6 +10,7 @@
 #include <numeric>
 #include <tuple>
 #include <cassert>
+#include <chrono>
 #include "Highs.h"
 
 using namespace std;
@@ -435,9 +436,9 @@ struct LpNormLP {
     const vector<DC<T>> dcs;
     const vector<T> vars;
 
+    bool use_only_chain_bound;
     vector<DC<T>> simple_dcs;
     vector<DC<T>> non_simple_dcs;
-    bool use_only_chain_bound;
     bool is_acyclic;
     vector<T> var_order;
     map<T, int> var_index;
@@ -457,8 +458,11 @@ struct LpNormLP {
 
         verify_input();
 
-        // TODO: If all degrees are acyclic (including the simple ones), then is it more
-        // efficient to use the chain bound?
+        // If all degrees are acyclic (including the simple ones), then it seems more efficient
+        // to just use the chain bound
+        if (approximate_topological_sort(vars, dcs).first)
+            use_only_chain_bound = true;
+
         for (const auto& dc : dcs)
             if (is_simple(dc))
                 simple_dcs.push_back(dc);
@@ -482,8 +486,8 @@ struct LpNormLP {
             var_set.insert(v);
         }
         for (const auto& dc : dcs) {
-            assert(dc.p > 0);
-            assert(dc.b >= 0);
+            assert(dc.p > 0.0);
+            assert(dc.b >= 0.0);
             assert(is_subset(dc.X, var_set));
             assert(is_subset(dc.Y, var_set));
         }
