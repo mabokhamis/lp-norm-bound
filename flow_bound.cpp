@@ -744,6 +744,22 @@ void test_flow_bound4() {
     assert(abs(p - 1.5) < 1e-7);
 }
 
+void test_flow_bound5() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 1 },
+        { {}, {"y", "z"}, 1, 1 },
+        { {}, {"z", "u"}, 1, 1 },
+        { {"x", "z"}, {"u"}, INFINITY, 0},
+        { {"y", "u"}, {"x"}, INFINITY, 0}
+    };
+    vector<string> vars = { "x", "y", "z", "u" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 2) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(abs(p - 2) < 1e-7);
+}
+
 void test_flow_bound_JOB_Q1() {
     vector<DC<string>> dcs = {
         {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
@@ -827,6 +843,7 @@ int main() {
     test_flow_bound2();
     test_flow_bound3();
     test_flow_bound4();
+    test_flow_bound5();
     test_flow_bound_JOB_Q1();
     return 0;
 }
