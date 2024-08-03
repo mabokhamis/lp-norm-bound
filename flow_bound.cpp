@@ -402,7 +402,7 @@ pair<bool,vector<T>> approximate_topological_sort(
     vector<pair<T, T>> E;
     for (auto& dc : dcs)
         for (auto& x : dc.X)
-            for (auto& y : dc.Y)
+            for (auto& y : set_difference(dc.Y, dc.X))
                 E.push_back({x, y});
     return approximate_topological_sort(V, E);
 }
@@ -597,10 +597,9 @@ struct LpNormLP {
                 // For acyclic DCs, add coefficients to flow conservation constraints
                 else {
                     DC<T> dc = order_consistent_dc(dcs[i]);
-                    set<T> Z = set_difference(dc.Y, dc.X);
-                    for (const auto& z : Z) {
-                        int e_z = get_flow_conservation_con(t, {z});
-                        lp.add_to_constraint(e_z, ai, 1.0);
+                    for (const auto& y : set_difference(dc.Y, dc.X)) {
+                        int e_y = get_flow_conservation_con(t, {y});
+                        lp.add_to_constraint(e_y, ai, 1.0);
                     }
                     if (dc.p != INFINITY)
                         for (const auto& x : dc.X) {
@@ -658,6 +657,7 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 }
 #endif
 
+// TODO: Verify that the input vars are unique and are a superset of the vars in the DCs
 double flow_bound(
     const vector<DC<string>> &dcs,
     const vector<string> &vars,
