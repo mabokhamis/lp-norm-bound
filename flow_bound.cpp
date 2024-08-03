@@ -215,6 +215,8 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // Get the model status
     const HighsModelStatus& model_status = highs.getModelStatus();
+    if (model_status==HighsModelStatus::kInfeasible)
+        return make_pair(INFINITY, vector<double>());
     assert(model_status==HighsModelStatus::kOptimal);
 
     const HighsInfo& info = highs.getInfo();
@@ -816,6 +818,49 @@ void test_flow_bound5() {
     assert(abs(p - 2) < 1e-7);
 }
 
+void test_flow_bound6() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 10 },
+        { {}, {"y", "z"}, 1, 10 },
+        { {}, {"x", "z"}, 1, 10 },
+        { {"x", "y"}, {"u"}, 4, 1},
+        { {"y", "z"}, {"u"}, 4, 1},
+        { {"x", "z"}, {"u"}, 4, 1},
+    };
+    vector<string> vars = { "x", "y", "z", "u" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 6) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(abs(p - 6) < 1e-7);
+}
+
+void test_flow_bound7() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 10 },
+        { {}, {"y", "z"}, 1, 10 },
+        { {}, {"x", "z"}, 1, 10 },
+        { {"x", "y"}, {"u"}, 4, 1},
+        { {"y", "z"}, {"u"}, 4, 1},
+        { {"x", "z"}, {"u"}, 4, 1},
+        { {"u"}, {"x"}, INFINITY, 100},
+        { {"u"}, {"x"}, INFINITY, 100},
+        { {"u"}, {"x"}, INFINITY, 100},
+        { {"u"}, {"y"}, INFINITY, 100},
+        { {"u"}, {"y"}, INFINITY, 100},
+        { {"u"}, {"y"}, INFINITY, 100},
+        { {"u"}, {"z"}, INFINITY, 100},
+        { {"u"}, {"z"}, INFINITY, 100},
+        { {"u"}, {"z"}, INFINITY, 100},
+    };
+    vector<string> vars = { "x", "y", "z", "u" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 6) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(isinf(p) && p > 0);
+}
+
 void test_flow_bound_JOB_Q1() {
     vector<DC<string>> dcs = {
         {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
@@ -994,6 +1039,8 @@ int main() {
     test_flow_bound3();
     test_flow_bound4();
     test_flow_bound5();
+    test_flow_bound6();
+    test_flow_bound7();
     test_flow_bound_JOB_Q1();
 
     test_approximate_topological_sort1();
