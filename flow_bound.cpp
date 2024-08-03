@@ -715,8 +715,9 @@ double flow_bound(
     const vector<DC<string>> &dcs,
     const vector<string> &vars,
 
-    // This optional parameter is for testing purposes only. If set to true, it will restrict
-    // the flow bound to become the weaker chain bound.
+    // The following optional parameter is for *testing purposes only*. You should always
+    // leave it at the default value. If set to true, it will restrict the flow bound to
+    // become the _weaker_ chain bound.
     bool use_only_chain_bound = false
 ) {
     // In debug mode, we operate directly on the given strings used to represent variables
@@ -891,6 +892,21 @@ void test_flow_bound9() {
     assert(abs(p - 2.7 * 3) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 2.7 * (4 + 2.0/3.0)) < 1e-7);
+}
+
+void test_flow_bound10() {
+    vector<DC<string>> dcs = {
+        { {"x"}, {"y"}, 4, 2.7 },
+        { {"y"}, {"z"}, 4, 2.7 },
+        { {"z"}, {"t"}, 4, 2.7 },
+        { {"t"}, {"x"}, 4, 2.7 },
+    };
+    vector<string> vars = { "x", "y", "z", "t" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 2.7 * 4) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(abs(p - 2.7 * 5.75) < 1e-7);
 }
 
 void test_flow_bound_infeasible() {
@@ -1090,6 +1106,7 @@ int main() {
     test_flow_bound7();
     test_flow_bound8();
     test_flow_bound9();
+    test_flow_bound10();
     test_flow_bound_infeasible();
     test_flow_bound_JOB_Q1();
 
