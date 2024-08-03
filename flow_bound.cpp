@@ -861,6 +861,38 @@ void test_flow_bound7() {
     assert(isinf(p) && p > 0);
 }
 
+void test_flow_bound8() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 2 },
+        { {}, {"y", "z"}, 1, 2 },
+        { {}, {"x", "z"}, 1, 2 },
+        { {"x", "y"}, {"u"}, 4, 1},
+        { {"y", "z"}, {"u"}, 4, 1},
+        { {"x", "z"}, {"u"}, 4, 1},
+    };
+    vector<string> vars = { "x", "y", "z", "u" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 3.5) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(abs(p - 3.5) < 1e-7);
+}
+
+void test_flow_bound_infeasible() {
+    vector<DC<string>> dcs = {
+        { {"x"}, {"y"}, INFINITY, 0 },
+        { {"y"}, {"z"}, INFINITY, 0 },
+        { {"z"}, {"t"}, INFINITY, 0 },
+        { {"t"}, {"x"}, INFINITY, 0 },
+    };
+    vector<string> vars = { "x", "y", "z", "t" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(isinf(p) && p > 0);
+    p = flow_bound(dcs, vars, true);
+    assert(isinf(p) && p > 0);
+}
+
 void test_flow_bound_JOB_Q1() {
     vector<DC<string>> dcs = {
         {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
@@ -1041,6 +1073,8 @@ int main() {
     test_flow_bound5();
     test_flow_bound6();
     test_flow_bound7();
+    test_flow_bound8();
+    test_flow_bound_infeasible();
     test_flow_bound_JOB_Q1();
 
     test_approximate_topological_sort1();
