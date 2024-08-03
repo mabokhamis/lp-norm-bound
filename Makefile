@@ -7,11 +7,11 @@ HIGHS_PATH_LIB = /usr/local/lib
 HIGHS_PATH_INCLUDE = /usr/local/include/highs
 
 # Source files
-SRCS = simple_dcs.cpp
+SRCS = flow_bound.cpp
 # Object files
 OBJS = $(SRCS:.cpp=.o)
 # Executable name
-EXEC = simple_dcs
+EXEC = flow_bound
 
 # Rule to build executable
 $(EXEC): $(OBJS)

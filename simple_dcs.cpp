@@ -1,46 +1,38 @@
 #include <iostream>
 #include <vector>
 #include <set>
-#include <unordered_set>
 #include <map>
-#include <unordered_map>
 #include <algorithm>
 #include <string>
 #include <cmath>
 #include <numeric>
-#include <tuple>
 #include <cassert>
 #include "Highs.h"
 
 using namespace std;
 
-//==========================================================================================
-// This macro should be left undefined unless you want to enable debugging
-// #define DEBUG
-//==========================================================================================
-
 // A variable has a name, lower bound, and upper bound.
 struct Variable {
     const string name;
-    const double lower_bound;
-    const double upper_bound;
+    double lower_bound;
+    double upper_bound;
 };
 
 // A constraint has a name, lower bound, upper bound, and a sum of variables. The sum is
 // represented as a dictionary from variable names to coefficients.
 struct Constraint {
     const string name;
-    const double lower_bound;
-    const double upper_bound;
-    unordered_map<int, double> sum;
+    double lower_bound;
+    double upper_bound;
+    map<string, double> sum;
 };
 
 // The objective has a boolean flag to indicate whether it is a maximization or minimization
 // and a sum indicating the objective function. The sum is represented as a dictionary from
 // variables names to coefficients.
 struct Objective {
-    const bool maximize;
-    unordered_map<int, double> sum;
+    bool maximize;
+    map<string, double> sum;
 
     Objective(bool maximize_) : maximize(maximize_) {}
 };
@@ -48,37 +40,39 @@ struct Objective {
 // A linear program has variables, constraints, and an objective.
 class LP {
 public:
-    vector<Variable> variables;
-    vector<Constraint> constraints;
+    map<string, Variable> variables;
+    map<string, Constraint> constraints;
     Objective objective;
 
     LP(bool maximize) : objective(maximize) {}
 
     // Add a variable to the LP
-    int add_variable(const string& name, double lower_bound, double upper_bound) {
-        variables.push_back({name, lower_bound, upper_bound});
-        return variables.size() - 1;
+    void add_variable(const string& name, double lower_bound, double upper_bound) {
+        assert(variables.find(name) == variables.end());
+        variables.insert({name, {name, lower_bound, upper_bound}});
     }
 
     // Add a constraint to the LP
-    int add_constraint(const string& name, double lower_bound, double upper_bound) {
-        constraints.push_back({name, lower_bound, upper_bound});
-        return constraints.size() - 1;
+    void add_constraint(const string& name, double lower_bound, double upper_bound) {
+        assert(constraints.find(name) == constraints.end());
+        constraints.insert({name, {name, lower_bound, upper_bound}});
     }
 
     // Add `coefficient * variable` to the given constraint
-    void add_to_constraint(int c, int v, double a) {
-        constraints.at(c).sum[v] += a;
+    void add_to_constraint(const string& constraint, const string& variable, double coefficient) {
+        assert(constraints.find(constraint) != constraints.end());
+        assert(variables.find(variable) != variables.end());
+        constraints[constraint].sum[variable] += coefficient;
     }
 
     // Add `coefficient * variable` to the objective
-    void add_to_objective(int v, double a) {
-        objective.sum[v] += a;
+    void add_to_objective(const string& variable, double coefficient) {
+        assert(variables.find(variable) != variables.end());
+        objective.sum[variable] += coefficient;
     }
 };
 
-#ifdef DEBUG
-ostream& operator<<(ostream& os, const Variable& v) {
+std::ostream& operator<<(std::ostream& os, const Variable& v) {
     if (v.lower_bound != -INFINITY)
         os << v.lower_bound << " <= ";
     os << v.name;
@@ -87,15 +81,9 @@ ostream& operator<<(ostream& os, const Variable& v) {
     return os;
 }
 
-ostream& print_sum(
-    ostream& os, const unordered_map<int, double>& sum, const vector<Variable>& variables
-) {
-    map<const string, double> sorted_sum;
-    for (const auto& t : sum) {
-        sorted_sum[variables[t.first].name] = t.second;
-    }
+std::ostream& operator<<(std::ostream& os, const map<string, double>& sum) {
     bool first = true;
-    for (const auto& t : sorted_sum) {
+    for (const auto& t : sum) {
         if (!first)
             os << " + ";
         first = false;
@@ -104,45 +92,43 @@ ostream& print_sum(
     return os;
 }
 
-ostream& print_constraint(
-    ostream& os, const Constraint& c, const vector<Variable>& variables
-) {
-    os << c.name << ": ";
-    if (c.lower_bound != -INFINITY)
-        os << c.lower_bound << " <= ";
-    print_sum(os, c.sum, variables);
-    if (c.upper_bound != INFINITY)
-        os << " <= " << c.upper_bound;
+std::ostream& operator<<(std::ostream& os, const Constraint& constraint) {
+    os << constraint.name << ":    ";
+    if (constraint.lower_bound != -INFINITY)
+        os << constraint.lower_bound << " <= ";
+    os << constraint.sum;
+    if (constraint.upper_bound != INFINITY)
+        os << " <= " << constraint.upper_bound;
     return os;
 }
 
-ostream& operator<<(ostream& os, const LP& lp) {
-    os << "Linear Program:" << endl;
-    os << (lp.objective.maximize ? "maximize" : "minimize") << " ";
-    print_sum(os, lp.objective.sum, lp.variables) << endl;
+std::ostream& operator<<(std::ostream& os, const Objective& obj) {
+    os << (obj.maximize ? "maximize" : "minimize") << " ";
+    os << obj.sum;
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const LP& lp) {
+    os << lp.objective << endl;
     os << "subject to" << endl;
-    for (const auto& v : lp.variables)
-        os << "    " << v << endl;
-    map<const string, const Constraint> sorted_constraints;
-    for (const auto& c : lp.constraints) {
-        sorted_constraints.insert({c.name, c});
+    for (const auto& v : lp.variables) {
+        os << "    " << v.second << endl;
     }
-    for (const auto& t : sorted_constraints) {
-        os << "    ";
-        print_constraint(os, t.second, lp.variables) << endl;
+    for (const auto& c : lp.constraints) {
+        os << "    " << c.second << endl;
     }
     return os;
 }
-#endif
 
-// Convert an LP to a HiGHs LpProblem
-pair<double,vector<double>> solve(const LP &p) {
-    #ifdef DEBUG
-    cout << p << endl;
-    #endif
+// Convert an LP to a Pulp LpProblem
+pair<double,map<string,double>> solve(const LP &p) {
+    map<string, double> var_map;
     int n = p.variables.size();
     int m = p.constraints.size();
-
+    map<string, int> var_index;
+    int i = 0;
+    for (const auto& v : p.variables)
+        var_index[v.first] = i++;
     HighsModel model;
     model.lp_.num_col_ = n;
     model.lp_.num_row_ = m;
@@ -150,21 +136,21 @@ pair<double,vector<double>> solve(const LP &p) {
     model.lp_.offset_ = 0.0;
     model.lp_.col_cost_.resize(n);
     for (const auto& v : p.objective.sum)
-        model.lp_.col_cost_[v.first] = v.second;
+        model.lp_.col_cost_[var_index[v.first]] = v.second;
     model.lp_.col_lower_.resize(n);
     model.lp_.col_upper_.resize(n);
-    int i = 0;
+    i = 0;
     for (const auto& v : p.variables) {
-        model.lp_.col_lower_[i] = v.lower_bound;
-        model.lp_.col_upper_[i] = v.upper_bound;
+        model.lp_.col_lower_[i] = v.second.lower_bound;
+        model.lp_.col_upper_[i] = v.second.upper_bound;
         ++i;
     }
     model.lp_.row_lower_.resize(m);
     model.lp_.row_upper_.resize(m);
     i = 0;
     for (const auto& c : p.constraints) {
-        model.lp_.row_lower_[i] = c.lower_bound;
-        model.lp_.row_upper_[i] = c.upper_bound;
+        model.lp_.row_lower_[i] = c.second.lower_bound;
+        model.lp_.row_upper_[i] = c.second.upper_bound;
         ++i;
     }
     model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
@@ -172,8 +158,8 @@ pair<double,vector<double>> solve(const LP &p) {
     i = 0;
     for (const auto& c : p.constraints) {
         model.lp_.a_matrix_.start_[i] = model.lp_.a_matrix_.index_.size();
-        for (const auto& t : c.sum) {
-            model.lp_.a_matrix_.index_.push_back(t.first);
+        for (const auto& t : c.second.sum) {
+            model.lp_.a_matrix_.index_.push_back(var_index[t.first]);
             model.lp_.a_matrix_.value_.push_back(t.second);
         }
         ++i;
@@ -182,12 +168,6 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // Create a Highs instance
     Highs highs;
-    #ifndef DEBUG
-    // Set the options to reduce verbosity
-    highs.setOptionValue("output_flag", false);  // Disables all output
-    highs.setOptionValue("log_to_console", false);  // Specifically disables logging to the console
-    highs.setOptionValue("message_level", 0);  // Disables all messages
-    #endif
     HighsStatus return_status;
 
     // Pass the model to HiGHS
@@ -208,466 +188,248 @@ pair<double,vector<double>> solve(const LP &p) {
     const HighsInfo& info = highs.getInfo();
     const double obj = info.objective_function_value;
     const bool has_values = info.primal_solution_status;
-    assert(has_values);
-    const HighsSolution& solution = highs.getSolution();
 
-    return make_pair(obj, solution.col_value);
+    const HighsSolution& solution = highs.getSolution();
+    map<string,double> sol;
+    // cout << "Primal Solution:" << endl;
+    i = 0;
+    if (has_values)
+        for (auto& v : p.variables) {
+            sol[v.first] = solution.col_value[i++];
+            // cout << "    " << v.first << ": " << sol[v.first] << endl;
+        }
+
+    return make_pair(obj, sol);
 }
 
 void test_lp1() {
     LP lp(true);
-    int x = lp.add_variable("x", 0.0, INFINITY);
-    int y = lp.add_variable("y", 0.0, INFINITY);
-    int z = lp.add_variable("z", 0.0, INFINITY);
-    int t = lp.add_variable("t", 0.0, 2.0);
-    int c1 = lp.add_constraint("c1", -INFINITY, 1.0);
-    lp.add_to_constraint(c1, x, 1.0);
-    lp.add_to_constraint(c1, y, 1.0);
-    int c2 = lp.add_constraint("c2", -INFINITY, 1.0);
-    lp.add_to_constraint(c2, y, 1.0);
-    lp.add_to_constraint(c2, z, 1.0);
-    int c3 = lp.add_constraint("c3", -INFINITY, 1.0);
-    lp.add_to_constraint(c3, x, 1.0);
-    lp.add_to_constraint(c3, z, 1.0);
-    lp.add_to_objective(x, 1.0);
-    lp.add_to_objective(y, 1.0);
-    lp.add_to_objective(z, 1.0);
-    lp.add_to_objective(t, 1.0);
+    lp.add_variable("x", 0.0, INFINITY);
+    lp.add_variable("y", 0.0, INFINITY);
+    lp.add_variable("z", 0.0, INFINITY);
+    lp.add_variable("t", 0.0, 2.0);
+    lp.add_constraint("c1", -INFINITY, 1.0);
+    lp.add_to_constraint("c1", "x", 1.0);
+    lp.add_to_constraint("c1", "y", 1.0);
+    lp.add_constraint("c2", -INFINITY, 1.0);
+    lp.add_to_constraint("c2", "y", 1.0);
+    lp.add_to_constraint("c2", "z", 1.0);
+    lp.add_constraint("c3", -INFINITY, 1.0);
+    lp.add_to_constraint("c3", "x", 1.0);
+    lp.add_to_constraint("c3", "z", 1.0);
+    lp.add_to_objective("x", 1.0);
+    lp.add_to_objective("y", 1.0);
+    lp.add_to_objective("z", 1.0);
+    lp.add_to_objective("t", 1.0);
     auto sol = solve(lp);
     auto& obj = sol.first;
     auto& val = sol.second;
     assert(abs(obj - 3.5) < 1e-7);
-    assert(abs(val[x] - 0.5) < 1e-7);
-    assert(abs(val[y] - 0.5) < 1e-7);
-    assert(abs(val[z] - 0.5) < 1e-7);
-    assert(abs(val[t] - 2.0) < 1e-7);
+    assert(abs(val["x"] - 0.5) < 1e-7);
+    assert(abs(val["y"] - 0.5) < 1e-7);
+    assert(abs(val["z"] - 0.5) < 1e-7);
+    assert(abs(val["t"] - 2.0) < 1e-7);
 }
 
 /******************************************************************************************/
 
-template <typename T>
-set<T> set_union(const set<T>& X, const set<T>& Y) {
-    set<T> Z;
-    copy(X.begin(), X.end(), inserter(Z, Z.end()));
-    copy(Y.begin(), Y.end(), inserter(Z, Z.end()));
-    return Z;
-}
-
-template <typename T>
-set<T> set_difference(const set<T>& X, const set<T>& Y) {
-    set<T> Z;
-    set_difference(X.begin(), X.end(), Y.begin(), Y.end(), inserter(Z, Z.end()));
-    return Z;
-}
-
-template <typename T>
-bool is_subset(const set<T>& X, const set<T>& Y) {
-    return includes(Y.begin(), Y.end(), X.begin(), X.end());
-}
-
 // A representation of a bound on an Lp-norm of a degree sequence
-template <typename T>
 struct DC {
-    const set<T> X;
-    const set<T> Y;
-    const double p;
-    const double b;
+    set<string> X;
+    set<string> Y;
+    double p;
+    double b;
 
-    DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
-        : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
+    DC(const set<string>& X_, const set<string>& Y_, double p_, double b_)
+    : X(X_), Y(Y_), p(p_), b(b_) {
+        copy(X.begin(), X.end(), inserter(Y, Y.end()));
+    }
 };
 
-// In Debug mode, we generate meaningful names for variables and constraints.
-#ifdef DEBUG
-inline string name(string s) {
-    return s;
-}
-
-inline string name(int i) {
-    return to_string(i);
-}
-
 // Given a set `X`, convert each element to a string and concatenate the strings.
-template <typename T>
-inline string set_name(const set<T> &X) {
-    string s = "{";
+inline string _name(const set<string> &X) {
+    string name = "{";
     bool first = true;
     for (const auto &x : X) {
         if (!first)
-            s += ",";
+            name += ",";
         first = false;
-        s += name(x);
+        name += x;
     }
-    s += "}";
-    return s;
+    name += "}";
+    return name;
 }
 
-template <typename T>
-ostream& operator<<(ostream& os, const DC<T>& dc) {
-    os << "log_2 ||deg(" << set_name(dc.Y) << "|" << set_name(dc.X) << ")||_" <<
-        dc.p << " <= " << dc.b;
+ostream& operator<<(ostream& os, const DC& dc) {
+    os << "log_2 |deg(" << _name(dc.Y) << "|" << _name(dc.X) << ")|_" << dc.p << " <= " << dc.b;
     return os;
 }
 
-template <typename T>
-inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
-    return "f" + to_string(t) + "_" + set_name(X) + "->" + set_name(Y);
+inline string flow_var_name(int t, const set<string> &X, const set<string> &Y) {
+    return "f" + to_string(t) + "_" + _name(X) + "->" + _name(Y);
 }
 
-template <typename T>
-inline string flow_capacity_con_name(int t, const set<T> &X, const set<T> &Y) {
-    return "c" + to_string(t) + "_" + set_name(X) + "->" + set_name(Y);
+inline string flow_capacity_name(int t, const set<string> &X, const set<string> &Y) {
+    return "c" + to_string(t) + "_" + _name(X) + "->" + _name(Y);
 }
 
-template <typename T>
-inline string flow_conservation_con_name(int t, const set<T> &Z) {
-    return "e" + to_string(t) + "_" + set_name(Z);
+inline string flow_conservation_name(int t, const set<string> &Z) {
+    return "e" + to_string(t) + "_" + _name(Z);
 }
 
-inline string dc_var_name(int i) {
-    return "a" + to_string(i);
-}
-// However, in Release mode, we skip name generation and just use empty strings
-#else
-template <typename T>
-inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
-    return "";
+inline string dc_coefficient_name(int i) {
+    return "a_" + to_string(i);
 }
 
-template <typename T>
-inline string flow_capacity_con_name(int t, const set<T> &X, const set<T> &Y) {
-    return "";
+bool is_subset(const set<string> &X, const set<string> &Y) {
+    return includes(Y.begin(), Y.end(), X.begin(), X.end());
 }
 
-template <typename T>
-inline string flow_conservation_con_name(int t, const set<T> &Z) {
-    return "";
-}
-
-inline string dc_var_name(int i) {
-    return "";
-}
-#endif
-
-template <typename T>
-struct LpNormLP {
-    const vector<DC<T>> dcs;
-    const vector<T> vars;
-
-    vector<DC<T>> simple_dcs;
-    vector<DC<T>> acyclic_dcs;
-    bool use_only_chain_bound;
-
-    LP lp;
-    map<tuple<int, const set<T>, const set<T>>, int> flow_var;
-    map<tuple<int, const set<T>, const set<T>>, int> flow_capacity_con;
-    map<tuple<int, const set<T>>, int> flow_conservation_con;
-    map<int, int> dc_var;
-
-    set<set<T>> vertices;
-    set<pair<set<T>, set<T>>> edges;
-
-    LpNormLP(
-        const vector<DC<T>>& dcs_, const vector<T>& vars_, bool use_only_chain_bound_
-    ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_), lp(false) {
-        for (const auto& dc : dcs) {
-            if (is_simple(dc))
-                simple_dcs.push_back(dc);
-            else
-                acyclic_dcs.push_back(dc);
-        }
-    }
-
-    bool is_simple(const DC<T>& dc) {
-        return !use_only_chain_bound && dc.X.size() <= 1;
-    }
-
-    int add_flow_var(
-        int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
-    ) {
-        auto key = make_tuple(t, X, Y);
-        auto it = flow_var.find(key);
-        assert(it == flow_var.end());
-        int v = lp.add_variable(flow_var_name(t, X, Y), lower_bound, upper_bound);
-        flow_var.insert({key, v});
-        return v;
-    }
-
-    inline int get_flow_var(int t, const set<T>& X, const set<T>& Y) {
-        auto key = make_tuple(t, X, Y);
-        return flow_var.at(key);
-    }
-
-    int add_flow_capacity_con(
-        int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
-    ) {
-        auto key = make_tuple(t, X, Y);
-        auto it = flow_capacity_con.find(key);
-        assert(it == flow_capacity_con.end());
-        int c = lp.add_constraint(flow_capacity_con_name(t, X, Y), lower_bound, upper_bound);
-        flow_capacity_con.insert({key, c});
-        return c;
-    }
-
-    inline int get_flow_capacity_con(int t, const set<T>& X, const set<T>& Y) {
-        auto key = make_tuple(t, X, Y);
-        return flow_capacity_con.at(key);
-    }
-
-    int add_flow_conservation_con(
-        int t, const set<T>& Z, double lower_bound, double upper_bound
-    ) {
-        auto key = make_tuple(t, Z);
-        auto it = flow_conservation_con.find(key);
-        assert(it == flow_conservation_con.end());
-        int c = lp.add_constraint(flow_conservation_con_name(t, Z), lower_bound, upper_bound);
-        flow_conservation_con.insert({key, c});
-        return c;
-    }
-
-    inline int get_flow_conservation_con(int t, const set<T>& Z) {
-        auto key = make_tuple(t, Z);
-        return flow_conservation_con.at(key);
-    }
-
-    int add_dc_var(int i, double lower_bound, double upper_bound) {
-        auto it = dc_var.find(i);
-        assert(it == dc_var.end());
-        int v = lp.add_variable(dc_var_name(i), lower_bound, upper_bound);
-        dc_var.insert({i, v});
-        return v;
-    }
-
-    inline int get_dc_var(int i) {
-        return dc_var.at(i);
-    }
-
-    void add_edge(const set<T>& X, const set<T>& Y) {
-        assert(is_subset(X, Y) || is_subset(Y, X));
-        if (X != Y && edges.find({Y, X}) == edges.end()) {
-            vertices.insert(X);
-            vertices.insert(Y);
-            edges.insert({X, Y});
-        }
-    }
-
-    void construct_graph() {
-        for (auto v : vars)
-            vertices.insert({v});
-        for (auto &dc : simple_dcs) {
-            // Add edge from X to Y
-            add_edge(dc.X, dc.Y);
-
-            // If p is not infinity, add an edge from {} to X
-            if (dc.p != INFINITY)
-                add_edge({}, dc.X);
-        }
-
-        // Add edges from Y to {} and from Y to {y} for every y in Y
-        for (auto &dc : simple_dcs) {
-            add_edge(dc.Y, {});
-            for (auto &y : dc.Y) {
-                add_edge(dc.Y, {y});
-            }
-        }
-    }
-
-    void add_flow_constraints() {
-        for (size_t i = 0; i < dcs.size(); ++i) {
-            add_dc_var(i, 0.0, INFINITY);
-        }
-
-        // For every t-flow
-        for (size_t t = 0; t < vars.size(); ++t) {
-            // For every vertex `Z`, add a flow conservation constraint
-            for (const auto &Z : vertices) {
-                if (Z.empty())
-                    continue;
-                double lower_bound = (Z.size() == 1 && *Z.begin() == vars[t]) ? 1.0 : 0.0;
-                add_flow_conservation_con(t, Z, lower_bound, INFINITY);
-            }
-
-            // For every edge `X -> Y`
-            for (const auto &edge : edges) {
-                auto &X = edge.first;
-                auto &Y = edge.second;
-                double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
-                double upper_bound = INFINITY;
-                int ft_X_Y = add_flow_var(t, X, Y, lower_bound, upper_bound);
-                if (!X.empty())
-                    lp.add_to_constraint(get_flow_conservation_con(t, X), ft_X_Y, -1.0);
-                if (!Y.empty())
-                    lp.add_to_constraint(get_flow_conservation_con(t, Y), ft_X_Y, 1.0);
-                if (X.size() <= Y.size()) {
-                    int ct_X_Y = add_flow_capacity_con(t, X, Y, 0.0, INFINITY);
-                    lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0);
-                }
-            }
-
-            for (size_t i = 0; i < dcs.size(); ++i) {
-                int ai = get_dc_var(i);
-                // For simple DCs, add coefficients to capacity constraints
-                if (is_simple(dcs[i])) {
-                    if (dcs[i].X.size() != dcs[i].Y.size()) {
-                        lp.add_to_constraint(
-                            get_flow_capacity_con(t, dcs[i].X, dcs[i].Y), ai, 1.0);
-                    }
-                    if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
-                        lp.add_to_constraint(
-                            get_flow_capacity_con(t, {}, dcs[i].X), ai, 1.0 / dcs[i].p);
-                    }
-                }
-                // For acyclic DCs, add coefficients to flow conservation constraints
-                else {
-                    set<T> Z = set_difference(dcs[i].Y, dcs[i].X);
-                    for (const auto& z : Z) {
-                        int e_z = get_flow_conservation_con(t, {z});
-                        lp.add_to_constraint(e_z, ai, 1.0);
-                    }
-                    if (dcs[i].p != INFINITY)
-                        for (const auto& x : dcs[i].X) {
-                            int e_x = get_flow_conservation_con(t, {x});
-                            lp.add_to_constraint(e_x, ai, 1.0 / dcs[i].p);
-                        }
-                }
-            }
-        }
-    }
-
-    void set_objective() {
-        for (size_t i = 0; i < dcs.size(); ++i) {
-            lp.add_to_objective(get_dc_var(i), dcs[i].b);
-        }
-    }
-};
-
-// In Release mode, we convert the strings used to represent variables to integers
-#ifndef DEBUG
-// Convert the type of the given DC vars from T1 to T2, and return the resulting DC
-template <typename T1, typename T2>
-DC<T2> transform_DC(const DC<T1>& dc, const map<T1, T2>& f) {
-    set<T2> new_X, new_Y;
-
-    for (const auto& x : dc.X) {
-        new_X.insert(f.at(x));
-    }
-    for (const auto& y : dc.Y) {
-        new_Y.insert(f.at(y));
-    }
-    return DC<T2>(new_X, new_Y, dc.p, dc.b);
-}
-
-// Convert DCs from string to integer representation
-pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
-    const vector<DC<string>>& dcs, const vector<string>& vars
+void _add_edge(
+    const set<string>& X,
+    const set<string>& Y,
+    set<set<string>>& vertices,
+    set<pair<set<string>, set<string>>>& edges
 ) {
-    map<string, int> var_map;
-    for (size_t i = 0; i < vars.size(); ++i) {
-        var_map[vars[i]] = i;
+    assert(is_subset(X, Y) || is_subset(Y, X));
+    if (X != Y && edges.find({Y, X}) == edges.end()) {
+        vertices.insert(X);
+        vertices.insert(Y);
+        edges.insert({X, Y});
     }
-
-    vector<DC<int>> new_dcs;
-    vector<int> new_vars;
-    for (const auto& dc : dcs) {
-        new_dcs.push_back(transform_DC(dc, var_map));
-    }
-
-    for (const auto& v : vars) {
-        new_vars.push_back(var_map[v]);
-    }
-
-    return make_pair(new_dcs, new_vars);
 }
-#endif
 
-double flow_bound(
-    const vector<DC<string>> &dcs,
-    const vector<string> &vars,
+// Given a list of DCs `dcs` and a list of target variables `vars`, construct the vertices
+// and edges of the network flow.
+pair<set<set<string>>, set<pair<set<string>, set<string>>>>
+_collect_vertices_and_edges(const vector<DC> &dcs, const vector<string> &vars) {
+    set<set<string>> vertices;
+    set<pair<set<string>, set<string>>> edges;
 
-    // This optional parameter is for testing purposes only. If set to true, it will restrict
-    // the flow bound to become the weaker chain bound.
-    bool use_only_chain_bound = false
+    // For every DC, add edges to the network flow
+    for (auto &dc : dcs) {
+        // Add edge from X to Y
+        _add_edge(dc.X, dc.Y, vertices, edges);
+
+        // If p is not infinity, add edge from {} to X
+        if (dc.p != INFINITY)
+            _add_edge({}, dc.X, vertices, edges);
+    }
+
+    // Add edges from Y to {} and from Y to {y} for every y in Y
+    for (auto &dc : dcs) {
+        _add_edge(dc.Y, {}, vertices, edges);
+        for (auto &y : dc.Y) {
+            _add_edge(dc.Y, {y}, vertices, edges);
+        }
+    }
+
+    return make_pair(vertices, edges);
+}
+
+void add_flow_constraints(
+    LP &lp,
+    const vector<DC>& dcs,
+    const vector<string>& vars,
+    const set<set<string>>& vertices,
+    const set<pair<set<string>, set<string>>>& edges
 ) {
-    // In debug mode, we operate directly on the given strings used to represent variables
-    #ifdef DEBUG
-    cout << "Degree Constraints:" << endl;
-    for (const auto& dc : dcs) {
-        cout << "    " << dc << endl;
+    for (size_t i = 0; i < dcs.size(); ++i) {
+        assert(dcs[i].X.size() <= 1); // Only simple degree constraints are supported
+        lp.add_variable(dc_coefficient_name(i), 0.0, INFINITY);
     }
-    cout << endl;
-    LpNormLP<string> lp(dcs, vars, use_only_chain_bound);
-    // In release mode, we convert the strings to integers
-    #else
-    auto int_dcs_vars = transform_dcs_to_int(dcs, vars);
-    LpNormLP<int> lp(int_dcs_vars.first, int_dcs_vars.second, use_only_chain_bound);
-    #endif
-    lp.construct_graph();
-    lp.add_flow_constraints();
-    lp.set_objective();
-    return solve(lp.lp).first;
+
+    // For every t-flow
+    for (size_t t = 0; t < vars.size(); ++t) {
+        // For every vertex `Z`, add a flow conservation constraint
+        for (const auto &Z : vertices) {
+            double nt_Z = (Z.size() == 1 && *Z.begin() == vars[t]) ?
+                1.0 : (Z.size() == 0 ? -1.0 : 0.0);
+            lp.add_constraint(flow_conservation_name(t, Z), nt_Z, INFINITY);
+        }
+
+        // For every edge `X -> Y`
+        for (const auto &edge : edges) {
+            auto &X = edge.first;
+            auto &Y = edge.second;
+            const string& ft_X_Y = flow_var_name(t, X, Y);
+            double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
+            double upper_bound = INFINITY;
+            lp.add_variable(ft_X_Y, lower_bound, upper_bound);
+            lp.add_to_constraint(flow_conservation_name(t, X), ft_X_Y, -1.0);
+            lp.add_to_constraint(flow_conservation_name(t, Y), ft_X_Y, 1.0);
+            if (X.size() <= Y.size()) {
+                const string& ct_X_Y = flow_capacity_name(t, X, Y);
+                lp.add_constraint(ct_X_Y, 0.0, INFINITY);
+                lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0);
+            }
+        }
+
+        // Add coefficients to capacity constraints
+        for (size_t i = 0; i < dcs.size(); ++i) {
+            string a_i = dc_coefficient_name(i);
+            if (dcs[i].X.size() != dcs[i].Y.size()) {
+                lp.add_to_constraint(flow_capacity_name(t, dcs[i].X, dcs[i].Y), a_i, 1.0);
+            }
+            if (dcs[i].p != INFINITY && !dcs[i].X.empty()) {
+                lp.add_to_constraint(flow_capacity_name(t, {}, dcs[i].X), a_i, 1.0 / dcs[i].p);
+            }
+        }
+    }
 }
 
-// Testcases for the flow_bound function
-void test_flow_bound1() {
-    vector<DC<string>> dcs = {
+void set_objective(LP &lp, const vector<DC> &dcs) {
+    for (size_t i = 0; i < dcs.size(); ++i) {
+        lp.add_to_objective(dc_coefficient_name(i), dcs[i].b);
+    }
+}
+
+double simple_dc_bound(const vector<DC> &dcs, const vector<string> &vars) {
+    LP lp(false);
+    auto ve = _collect_vertices_and_edges(dcs, vars);
+    auto &vertices = ve.first;
+    auto &edges = ve.second;
+    add_flow_constraints(lp, dcs, vars, vertices, edges);
+    set_objective(lp, dcs);
+    return solve(lp).first;
+}
+
+// Testcases for the simple_dc_bound function
+void test_simple_dc_bound1() {
+    vector<DC> dcs = {
         { {}, {"A", "B"}, 1, 1 },
         { {}, {"A", "C"}, 1, 1 },
         { {}, {"B", "C"}, 1, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p;
-    p = flow_bound(dcs, vars, false);
-    assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    double p = simple_dc_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
-void test_flow_bound2() {
-    vector<DC<string>> dcs = {
+void test_simple_dc_bound2() {
+    vector<DC> dcs = {
         { {}, {"A", "B"}, INFINITY, 1 },
         { {}, {"A", "C"}, INFINITY, 1 },
         { {}, {"B", "C"}, INFINITY, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p;
-    p = flow_bound(dcs, vars, false);
-    assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    double p = simple_dc_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
-void test_flow_bound3() {
-    vector<DC<string>> dcs = {
+void test_simple_dc_bound3() {
+    vector<DC> dcs = {
         { {"A"}, {"B"}, 2, 1 },
         { {"B"}, {"C"}, 2, 1 },
         { {"C"}, {"A"}, 2, 1 }
     };
     vector<string> vars = { "A", "B", "C" };
-    double p;
-    p = flow_bound(dcs, vars, false);
-    assert(abs(p - 2.0) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    double p = simple_dc_bound(dcs, vars);
     assert(abs(p - 2.0) < 1e-7);
 }
 
-void test_flow_bound4() {
-    vector<DC<string>> dcs = {
-        { {}, {"x", "y"}, 1, 1 },
-        { {}, {"y", "z"}, 1, 1 },
-        { {}, {"x", "z"}, 1, 1 },
-        { {"x", "z"}, {"u"}, INFINITY, 0},
-        { {"y", "z"}, {"t"}, INFINITY, 0}
-    };
-    vector<string> vars = { "x", "y", "z", "u", "t" };
-    double p;
-    p = flow_bound(dcs, vars, false);
-    assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
-    assert(abs(p - 1.5) < 1e-7);
-}
-
-void test_flow_bound_JOB_Q1() {
-    vector<DC<string>> dcs = {
+void test_simple_dc_bound_JOB_Q1() {
+    vector<DC> dcs = {
         {{"1"}, {"0MC", "1"}, 1.0, log2(1334883.0)},
         {{"1"}, {"0MC", "1"}, 2.0, log2(1685.8359943956589)},
         {{"1"}, {"0MC", "1"}, 3.0, log2(232.70072156462575)},
@@ -735,20 +497,21 @@ void test_flow_bound_JOB_Q1() {
 
     vector<string> vars = {"0MC", "0MI_IDX", "0T", "1"};
 
-    double p;
-    p = pow(2, flow_bound(dcs, vars, false));
-    assert(abs(p-7017) < 1);
-    p = pow(2, flow_bound(dcs, vars, true));
+    double p = pow(2, simple_dc_bound(dcs, vars));
     assert(abs(p-7017) < 1);
 }
 
 // Add other test functions similarly
 int main() {
     test_lp1();
-    test_flow_bound1();
-    test_flow_bound2();
-    test_flow_bound3();
-    test_flow_bound4();
-    test_flow_bound_JOB_Q1();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound1();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound2();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound3();
+    cout << string(80, '-') << endl;
+    test_simple_dc_bound_JOB_Q1();
+    cout << string(80, '-') << endl;
     return 0;
 }
