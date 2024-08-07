@@ -446,14 +446,26 @@ pair<bool,vector<T>> approximate_topological_sort(
 // Instead of a directed multi-graph, now we are given a set of DCs
 template <typename T>
 pair<bool,vector<T>> approximate_topological_sort(
-    const vector<T>& V, const vector<DC<T>>& dcs
+    const vector<T>& V, const vector<DC<T>>& dcs, bool use_weighted_edges = true
 ) {
     vector<pair<T, T>> E;
+    vector<double> W;
     for (auto& dc : dcs)
+    {
+        double w;
+        if (!use_weighted_edges)
+            w = 1.0;
+        else {
+            double coverage = dc.X.size() / (double)dc.p + (dc.Y.size() - dc.X.size());
+            w = coverage / max(dc.b, 1e-6);
+        }
         for (auto& x : dc.X)
-            for (auto& y : set_difference(dc.Y, dc.X))
+            for (auto& y : set_difference(dc.Y, dc.X)) {
                 E.push_back({x, y});
-    return approximate_topological_sort(V, E);
+                W.push_back(w);
+            }
+    }
+    return approximate_topological_sort(V, E, W);
 }
 
 template <typename T>
@@ -464,6 +476,7 @@ struct LpNormLP {
     bool use_only_chain_bound;
     vector<DC<T>> simple_dcs;
     vector<DC<T>> non_simple_dcs;
+    bool use_weighted_edges;
     bool is_acyclic;
     vector<T> var_order;
     map<T, int> var_index;
@@ -478,14 +491,18 @@ struct LpNormLP {
     set<pair<set<T>, set<T>>> edges;
 
     LpNormLP(
-        const vector<DC<T>>& dcs_, const vector<T>& vars_, bool use_only_chain_bound_
-    ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_), lp(false) {
+        const vector<DC<T>>& dcs_,
+        const vector<T>& vars_,
+        bool use_only_chain_bound_,
+        bool use_weighted_edges_
+    ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_),
+        use_weighted_edges(use_weighted_edges_), lp(false) {
 
         verify_input();
 
         // If all degrees are acyclic (including the simple ones), then it seems more efficient
         // to just use the chain bound
-        if (approximate_topological_sort(vars, dcs).first)
+        if (approximate_topological_sort(vars, dcs, use_weighted_edges).first)
             use_only_chain_bound = true;
 
         for (const auto& dc : dcs)
@@ -493,7 +510,7 @@ struct LpNormLP {
                 simple_dcs.push_back(dc);
             else
                 non_simple_dcs.push_back(dc);
-        auto p = approximate_topological_sort(vars, non_simple_dcs);
+        auto p = approximate_topological_sort(vars, non_simple_dcs, use_weighted_edges);
         is_acyclic = p.first;
         var_order = p.second;
         for (size_t i = 0; i < var_order.size(); ++i) {
@@ -738,10 +755,19 @@ double flow_bound(
     const vector<DC<string>> &dcs,
     const vector<string> &vars,
 
-    // The following optional parameter is for *testing purposes only*. You should always
-    // leave it at the default value. If set to true, it will restrict the flow bound to
-    // become the _weaker_ chain bound.
-    bool use_only_chain_bound = false
+    //---------------------------------------------------------------------------
+    // The following optional parameters are for *TESTING PURPOSES ONLY*. They should be
+    // left to their default values in practice.
+
+    // `use_only_chain_bound`: If set to true, the flow bound will be restricted to the
+    // chain bound (which is weaker than the flow bound)
+    bool use_only_chain_bound = false,
+    // `use_weighted_edges`: The flow bound needs to find a variable ordering that is as
+    // consistent as possible with the given DCs. By default, it does so by constructing
+    // a weighted graph. If `use_weighted_edges` is set to false, it will ignore the weights
+    // resulting in a weaker heuristic.
+    bool use_weighted_edges = true
+    //---------------------------------------------------------------------------
 ) {
     // In debug mode, we operate directly on the given strings used to represent variables
     #ifdef DEBUG_FLOW_BOUND
@@ -750,11 +776,12 @@ double flow_bound(
         cout << "    " << dc << endl;
     }
     cout << endl;
-    LpNormLP<string> lp(dcs, vars, use_only_chain_bound);
+    LpNormLP<string> lp(dcs, vars, use_only_chain_bound, use_weighted_edges);
     // In release mode, we convert the strings to integers
     #else
     auto int_dcs_vars = transform_dcs_to_int(dcs, vars);
-    LpNormLP<int> lp(int_dcs_vars.first, int_dcs_vars.second, use_only_chain_bound);
+    LpNormLP<int> lp(
+        int_dcs_vars.first, int_dcs_vars.second, use_only_chain_bound, use_weighted_edges);
     #endif
     lp.construct_graph();
     lp.add_flow_constraints();
@@ -879,10 +906,14 @@ void test_flow_bound7() {
     };
     vector<string> vars = { "x", "y", "z", "u" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false, true);
     assert(abs(p - 6) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, false, false);
+    assert(abs(p - 6) < 1e-7);
+    p = flow_bound(dcs, vars, true, false);
     assert(isinf(p) && p > 0);
+    p = flow_bound(dcs, vars, true, true);
+    assert(abs(p - 6) < 1e-7);
 }
 
 void test_flow_bound8() {
