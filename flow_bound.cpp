@@ -380,21 +380,31 @@ inline string dc_var_name(int i) {
 //    topological ordering as possible
 template <typename T>
 pair<bool,vector<T>> approximate_topological_sort(
-    const vector<T>& V, const vector<pair<T, T>>& E
+    const vector<T>& V,             // Vertices
+    const vector<pair<T, T>>& E,    // Edges
+    const vector<double>& W         // Weights
 ) {
-    map<T, int> out_degree;
-    map<T, vector<T>> in_edges;
+    assert(E.size() == W.size());
+    for (auto &w : W)
+        assert(w >= 0.0);
+    // The *weighted* outdegree of each vertex
+    map<T, double> out_degree;
+    map<T, vector<pair<T, double>>> in_edges;
     for (auto& v : V)
-        out_degree[v] = 0;
+        out_degree[v] = 0.0;
+    int i = 0;
     for (auto& e : E) {
+        const T& v = e.first;
+        const T& u = e.second;
+        double w = W[i];
         // Every edge must have both endpoints in V
-        assert(out_degree.find(e.first) != out_degree.end());
-        assert(out_degree.find(e.second) != out_degree.end());
-
-        out_degree[e.first]++;
-        in_edges[e.second].push_back(e.first);
+        assert(out_degree.find(v) != out_degree.end());
+        assert(out_degree.find(u) != out_degree.end());
+        out_degree[v] += w;
+        in_edges[u].push_back(make_pair(v, w));
+        ++i;
     }
-    set<pair<int, T>> Q;
+    set<pair<double, T>> Q;
     for (auto& p : out_degree) {
         Q.insert({p.second, p.first});
     }
@@ -402,23 +412,36 @@ pair<bool,vector<T>> approximate_topological_sort(
     vector<T> order;
     while (!Q.empty()) {
         auto it = Q.begin();
-        if (it->first != 0)
+        if (it->first > 1e-6)
             acyclic = false;
-        T u = it->second;
+        // TODO: Is 1e-6 a good threshold?
+        const T& u = it->second;
         order.push_back(u);
         out_degree.erase(u);
         Q.erase(it);
-        for (auto& v : in_edges[u])
+        for (const auto& p : in_edges[u]) {
+            const T& v = p.first;
+            double w = p.second;
             if (out_degree.find(v) != out_degree.end()) {
-                assert(out_degree[v] > 0);
-                out_degree[v]--;
-                Q.erase({out_degree[v] + 1, v});
+                Q.erase({out_degree[v], v});
+                out_degree[v] -= w;
                 Q.insert({out_degree[v], v});
             }
+        }
     }
     reverse(order.begin(), order.end());
     return {acyclic, order};
 }
+
+template <typename T>
+pair<bool,vector<T>> approximate_topological_sort(
+    const vector<T>& V,
+    const vector<pair<T, T>>& E
+) {
+    vector<double> W = vector<double>(E.size(), 1.0);
+    return approximate_topological_sort(V, E, W);
+}
+
 
 // Instead of a directed multi-graph, now we are given a set of DCs
 template <typename T>
@@ -1042,6 +1065,16 @@ void test_approximate_topological_sort3() {
     auto p = approximate_topological_sort(V, E);
     assert(p.first == false);
     assert(p.second == vector<string>({"B", "C", "D", "A"}));
+
+    vector<double> W2 = {10.0, 1.0, 10.0, 10.0};
+    auto p2 = approximate_topological_sort(V, E, W2);
+    assert(p2.first == false);
+    assert(p2.second == vector<string>({"C", "D", "A", "B"}));
+
+    vector<double> W3 = {10.0, 10.0, 1.0, 10.0};
+    auto p3 = approximate_topological_sort(V, E, W3);
+    assert(p3.first == false);
+    assert(p3.second == vector<string>({"D", "A", "B", "C"}));
 }
 
 void test_approximate_topological_sort4() {
@@ -1058,6 +1091,11 @@ void test_approximate_topological_sort4() {
     auto p = approximate_topological_sort(V, E);
     assert(p.first == false);
     assert(p.second == vector<string>({"A", "B", "C", "D"}));
+
+    vector<double> W2 = {4.0, 4.0, 2.0, 3.0, 1.0, 6.0, 10.0};
+    auto p2 = approximate_topological_sort(V, E, W2);
+    assert(p2.first == false);
+    assert(p2.second == vector<string>({"C", "D", "A", "B"}));
 }
 
 void test_approximate_topological_sort5() {
