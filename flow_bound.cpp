@@ -299,7 +299,10 @@ struct DC {
     const double b;
 
     DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
-        : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {}
+    : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {
+        assert(p > 0.0);
+        assert(b >= 0.0);
+    }
 };
 
 // In Debug mode, we generate meaningful names for variables and constraints.
@@ -528,8 +531,6 @@ struct LpNormLP {
             var_set.insert(v);
         }
         for (const auto& dc : dcs) {
-            assert(dc.p > 0.0);
-            assert(dc.b >= 0.0);
             assert(is_subset(dc.X, var_set));
             assert(is_subset(dc.Y, var_set));
         }
