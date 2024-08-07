@@ -1138,23 +1138,33 @@ void test_approximate_topological_sort5() {
         { {"y", "z"}, {"t"}, INFINITY, 0}
     };
     vector<string> vars = { "x", "y", "z", "u", "t" };
-    auto p = approximate_topological_sort(vars, dcs);
+
+    auto p = approximate_topological_sort(vars, dcs, false);
     assert(p.first == true);
     assert(p.second == vector<string>({"z", "y", "x", "u", "t"}));
+
+    auto p2 = approximate_topological_sort(vars, dcs, true);
+    assert(p2.first == true);
+    assert(p2.second == vector<string>({"z", "y", "x", "u", "t"}));
 }
 
 void test_approximate_topological_sort6() {
         vector<DC<string>> dcs = {
-        { {}, {"x", "y"}, 1, 1 },
-        { {}, {"y", "z"}, 1, 1 },
-        { {}, {"z", "u"}, 1, 1 },
-        { {"x", "z"}, {"u"}, INFINITY, 0},
-        { {"y", "u"}, {"x"}, INFINITY, 0}
+        { {}, {"x", "y"}, 1, 10 },
+        { {}, {"y", "z"}, 1, 10 },
+        { {}, {"z", "u"}, 1, 10 },
+        { {"x", "z"}, {"u"}, 100, 3},
+        { {"y", "u"}, {"x"}, 100, 1}
     };
     vector<string> vars = { "x", "y", "z", "u" };
-    auto p = approximate_topological_sort(vars, dcs);
+
+    auto p = approximate_topological_sort(vars, dcs, false);
     assert(p.first == false);
     assert(p.second == vector<string>({"z", "y", "x", "u"}));
+
+    auto p2 = approximate_topological_sort(vars, dcs, true);
+    assert(p2.first == false);
+    assert(p2.second == vector<string>({"z", "y", "u", "x"}));
 }
 
 
