@@ -730,9 +730,11 @@ DC<T2> transform_DC(const DC<T1>& dc, const map<T1, T2>& f) {
 pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
     const vector<DC<string>>& dcs, const vector<string>& vars
 ) {
+    vector<string> sorted_vars = vars;
+    sort(sorted_vars.begin(), sorted_vars.end());
     map<string, int> var_map;
-    for (size_t i = 0; i < vars.size(); ++i) {
-        var_map[vars[i]] = i;
+    for (size_t i = 0; i < sorted_vars.size(); ++i) {
+        var_map[sorted_vars[i]] = i;
     }
 
     vector<DC<int>> new_dcs;
