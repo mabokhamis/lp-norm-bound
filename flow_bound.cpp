@@ -730,11 +730,19 @@ DC<T2> transform_DC(const DC<T1>& dc, const map<T1, T2>& f) {
 pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
     const vector<DC<string>>& dcs, const vector<string>& vars
 ) {
+    // We sort the variable names in order to ensure that their assigned numbers will
+    // maintain the same relative order as the original names. This is needed to ensure that
+    // the behavior of subsequent code does not change when var names are replaced by
+    // integers, even in situations where there is some arbitrary tie breaking (e.g. based
+    // on string alphabetical ordering)
     vector<string> sorted_vars = vars;
     sort(sorted_vars.begin(), sorted_vars.end());
     map<string, int> var_map;
     for (size_t i = 0; i < sorted_vars.size(); ++i) {
-        var_map[sorted_vars[i]] = i;
+        const string& v = sorted_vars[i];
+        // Variable names in `vars` must be unique
+        assert(var_map.find(v) == var_map.end());
+        var_map[v] = i;
     }
 
     vector<DC<int>> new_dcs;
