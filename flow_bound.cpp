@@ -528,25 +528,52 @@ pair<bool,vector<T>> approximate_topological_sort(
     return approximate_topological_sort(V, E, W);
 }
 
+// The core data structure that is used to construct the LP for the flow bound
 template <typename T>
 struct LpNormLP {
+    // The input DCs and variables
     const vector<DC<T>> dcs;
     const vector<T> vars;
 
+    // A flag that determines whether we want to restrict the flow bound to become the
+    // weaker chain bound
     bool use_only_chain_bound;
+    // The simple and non-simple DCs
     vector<DC<T>> simple_dcs;
     vector<DC<T>> non_simple_dcs;
+    // Whether we want to translate the non-simple DCs into a *weighted* graph `G` or not
     bool use_weighted_edges;
+    // Whether `G` is acyclic
     bool is_acyclic;
+    // An (approximate) topological ordering of the vertices of `G`
     vector<T> var_order;
+    // The index of each vertex in the topological ordering
     map<T, int> var_index;
 
+    // The LP for the flow bound
     LP lp;
+
+    // Background: For every query variable `t`, the flow bound has a separate flow
+    // function, which we call below the `t`-th flow. However, all the flow functions share
+    // the same network architecture.
+
+    // Given an integer `t`, a set `X`, and a set `Y`, `flow_var[(t, X, Y)]` is the variable
+    // representing the `t`-th flow from `X` to `Y`.
     map<tuple<int, const set<T>, const set<T>>, int> flow_var;
+    // Given an integer `t`, a set `X`, and a set `Y`, `flow_capacity_con[(t, X, Y)]` is the
+    // constraint on the capacity of the `t`-th flow from `X` to `Y`.
     map<tuple<int, const set<T>, const set<T>>, int> flow_capacity_con;
+    // Given an integer `t` and a set `Z`, `flow_conservation_con[(t, Z)]` is the flow
+    // conservation constraint at node `Z` for the `t`-th flow.
     map<tuple<int, const set<T>>, int> flow_conservation_con;
+    // Given an integer `i`, `dc_var[i]` is the variable representing the coefficient of the
+    // `i`-th DC in the objective function.
     map<int, int> dc_var;
 
+    // `vertices` and `edges` below specify a graph representing the flow network
+    // architecture. We construct this graph based on the *simple* DCs. Note that this graph
+    // is totally different from the graph `G` that is used to represent the non-simple DCs
+    // above.
     set<set<T>> vertices;
     set<pair<set<T>, set<T>>> edges;
 
@@ -558,18 +585,22 @@ struct LpNormLP {
     ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_),
         use_weighted_edges(use_weighted_edges_), lp(false) {
 
+        // Verify that the input DCs and variables make sense
         verify_input();
 
-        // If all degrees are acyclic (including the simple ones), then it seems more efficient
-        // to just use the chain bound
+        // If all degrees are acyclic (including the simple ones), then the flow bound
+        // becomes equivalent to the chain bound, and it seems that the chain bound is more
+        // efficient in this case
         if (approximate_topological_sort(vars, dcs, use_weighted_edges).first)
             use_only_chain_bound = true;
 
+        // Separate DCs into simple and non-simple
         for (const auto& dc : dcs)
             if (is_simple(dc))
                 simple_dcs.push_back(dc);
             else
                 non_simple_dcs.push_back(dc);
+        // Compute an approximate topological ordering based on the non-simple DCs
         auto p = approximate_topological_sort(vars, non_simple_dcs, use_weighted_edges);
         is_acyclic = p.first;
         var_order = p.second;
@@ -582,21 +613,27 @@ struct LpNormLP {
     void verify_input() {
         set<T> var_set;
         for (const auto& v : vars) {
-            // If the following assertion fails, this means that the input vars are not unique
+            // If the following assertion fails, this means that the input variables `vars`
+            // contain duplicates
             assert(var_set.find(v) == var_set.end());
 
             var_set.insert(v);
         }
         for (const auto& dc : dcs) {
+            // For every DC, both sets `X` and `Y` must be subsets of `vars`
             assert(is_subset(dc.X, var_set));
             assert(is_subset(dc.Y, var_set));
         }
     }
 
+    // Whether a DC is simple or not
     bool is_simple(const DC<T>& dc) {
         return !use_only_chain_bound && dc.X.size() <= 1;
     }
 
+    // Given a DC `log_2 ||deg(Y|X)||_p <= b`, return  another DC
+    // `log_2 ||deg(Y2|X)||_p <= b`, where `Y2` is the subset of `Y` that only contains
+    // those variables that come after `X in the approximate topological ordering `var_order`
     DC<T> order_consistent_dc(const DC<T>& dc) {
         int last_x = -1;
         for (const auto& x : dc.X)
@@ -608,6 +645,8 @@ struct LpNormLP {
         return DC<T>(dc.X, new_Y, dc.p, dc.b);
     }
 
+    // Add a flow variable flow_var[(t, X, Y)], which specifies the `t`-th flow from `X` to
+    // `Y`.
     int add_flow_var(
         int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
     ) {
@@ -624,6 +663,8 @@ struct LpNormLP {
         return flow_var.at(key);
     }
 
+    // Add a flow capacity constraint flow_capacity_con[(t, X, Y)], which specifies the
+    // constraint on the capacity of the `t`-th flow from `X` to `Y`.
     int add_flow_capacity_con(
         int t, const set<T>& X, const set<T>& Y, double lower_bound, double upper_bound
     ) {
@@ -640,6 +681,8 @@ struct LpNormLP {
         return flow_capacity_con.at(key);
     }
 
+    // Add a flow conservation constraint flow_conservation_con[(t, Z)], which specifies the
+    // flow conservation constraint at node `Z` for the `t`-th flow.
     int add_flow_conservation_con(
         int t, const set<T>& Z, double lower_bound, double upper_bound
     ) {
@@ -656,6 +699,8 @@ struct LpNormLP {
         return flow_conservation_con.at(key);
     }
 
+    // Add a variable representing the coefficient of the `i`-th DC in the objective
+    // function.
     int add_dc_var(int i, double lower_bound, double upper_bound) {
         auto it = dc_var.find(i);
         assert(it == dc_var.end());
@@ -668,7 +713,11 @@ struct LpNormLP {
         return dc_var.at(i);
     }
 
+    // In the flow network, add an edge from `X` to `Y` (assuming we don't already have an
+    // opposite edge from Y to X)
     void add_edge(const set<T>& X, const set<T>& Y) {
+        // For every edge `X -> Y` in the flow network, we must have either X is a subset of
+        // Y or Y is a subset of X
         assert(is_subset(X, Y) || is_subset(Y, X));
         if (X != Y && edges.find({Y, X}) == edges.end()) {
             vertices.insert(X);
@@ -677,7 +726,8 @@ struct LpNormLP {
         }
     }
 
-    void construct_graph() {
+    // Construct the flow network based on the *simple* DCs
+    void construct_flow_network() {
         for (auto v : vars)
             vertices.insert({v});
         for (auto &dc : simple_dcs) {
@@ -713,17 +763,27 @@ struct LpNormLP {
                 add_flow_conservation_con(t, Z, lower_bound, INFINITY);
             }
 
-            // For every edge `X -> Y`
+            // For every edge `X -> Y`, we must have either X is a subset of Y or Y is a
+            // subset of X. We add a flow variable for the `t`-th flow from `X` to `Y`.
+            //  - If X is a subset of Y, then the flow variable is unbounded, but we need to
+            //    add a capacity constraint.
+            //  - If Y is a subset of X, then the flow variable is lower bounded by 0, but
+            //    we don't need to add a capacity constraint. (The capacity is infinite in
+            //    this case)
             for (const auto &edge : edges) {
                 auto &X = edge.first;
                 auto &Y = edge.second;
+                // If Y is a subset of X, then the flow variable is lower bounded by 0
                 double lower_bound = (X.size() <= Y.size()) ? -INFINITY : 0.0;
                 double upper_bound = INFINITY;
                 int ft_X_Y = add_flow_var(t, X, Y, lower_bound, upper_bound);
+                // The flow from X to Y contributes negatively to the flow conservation
+                // constraint at `X` and positively to the constraint at `Y`
                 if (!X.empty())
                     lp.add_to_constraint(get_flow_conservation_con(t, X), ft_X_Y, -1.0);
                 if (!Y.empty())
                     lp.add_to_constraint(get_flow_conservation_con(t, Y), ft_X_Y, 1.0);
+                // If X is a subset of Y, add a capacity constraint
                 if (X.size() <= Y.size()) {
                     int ct_X_Y = add_flow_capacity_con(t, X, Y, 0.0, INFINITY);
                     lp.add_to_constraint(ct_X_Y, ft_X_Y, -1.0);
@@ -732,8 +792,11 @@ struct LpNormLP {
 
             for (size_t i = 0; i < dcs.size(); ++i) {
                 int ai = get_dc_var(i);
-                // For simple DCs, add coefficients to capacity constraints
+                // For simple DCs, add coefficients to capacity constraints.
                 if (is_simple(dcs[i])) {
+                    // Specifically, a simple DC `log_2 ||deg(Y|X)||_p <= b` contributes a
+                    // coefficient of 1 to the capacity constraint from X to Y and a
+                    // coefficient of 1/p to the capacity constraint from {} to X
                     if (dcs[i].X.size() != dcs[i].Y.size()) {
                         lp.add_to_constraint(
                             get_flow_capacity_con(t, dcs[i].X, dcs[i].Y), ai, 1.0);
@@ -743,8 +806,14 @@ struct LpNormLP {
                             get_flow_capacity_con(t, {}, dcs[i].X), ai, 1.0 / dcs[i].p);
                     }
                 }
-                // For acyclic DCs, add coefficients to flow conservation constraints
+                // For non-simple DCs, add coefficients to flow conservation constraints
                 else {
+                    // Specifically, given a non-simple DC `log_2 ||deg(Y|X)||_p <= b`, let
+                    // `log_2 ||deg(Y2|X)||_p <= b` be the version of this DC that is
+                    // consistent with the chosen approximate topological ordering
+                    // `var_order`. Then, this DC contributes a coefficient of 1 to the flow
+                    // conservation constraint for every y in Y2 and a coefficient of 1/p to
+                    // the flow conservation constraint for every x in X
                     DC<T> dc = order_consistent_dc(dcs[i]);
                     for (const auto& y : set_difference(dc.Y, dc.X)) {
                         int e_y = get_flow_conservation_con(t, {y});
@@ -760,6 +829,8 @@ struct LpNormLP {
         }
     }
 
+    // Set the objective function to be the sum of the coefficients of the DCs multiplied by
+    // their corresponding bounds `dc.b`
     void set_objective() {
         for (size_t i = 0; i < dcs.size(); ++i) {
             lp.add_to_objective(get_dc_var(i), dcs[i].b);
@@ -845,13 +916,13 @@ double flow_bound(
     }
     cout << endl;
     LpNormLP<string> lp(dcs, vars, use_only_chain_bound, use_weighted_edges);
-    // In release mode, we convert the strings to integers
     #else
+    // In release mode, we convert the strings to numbers
     auto int_dcs_vars = transform_dcs_to_int(dcs, vars);
     LpNormLP<int> lp(
         int_dcs_vars.first, int_dcs_vars.second, use_only_chain_bound, use_weighted_edges);
     #endif
-    lp.construct_graph();
+    lp.construct_flow_network();
     lp.add_flow_constraints();
     lp.set_objective();
     return solve(lp.lp).first;
