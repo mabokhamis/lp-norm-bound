@@ -282,6 +282,7 @@ void test_lp1() {
 // Generic utility functions:
 //==========================================================================================
 
+// Union of two sets
 template <typename T>
 set<T> set_union(const set<T>& X, const set<T>& Y) {
     set<T> Z;
@@ -290,6 +291,7 @@ set<T> set_union(const set<T>& X, const set<T>& Y) {
     return Z;
 }
 
+// Set difference of two sets
 template <typename T>
 set<T> set_difference(const set<T>& X, const set<T>& Y) {
     set<T> Z;
@@ -297,6 +299,7 @@ set<T> set_difference(const set<T>& X, const set<T>& Y) {
     return Z;
 }
 
+// Whether a set is a subset of another
 template <typename T>
 bool is_subset(const set<T>& X, const set<T>& Y) {
     return includes(Y.begin(), Y.end(), X.begin(), X.end());
@@ -305,18 +308,24 @@ bool is_subset(const set<T>& X, const set<T>& Y) {
 
 
 //==========================================================================================
-// The flow bound implementation with Lp-norm constraints
+// The core implementation of the flow bound with Lp-norm constraints
 //==========================================================================================
 
-// A representation of a bound on an Lp-norm of a degree sequence
+// A representation of a constraint on an Lp-norm of a degree sequence. The constraint is:
+// log_2 ||deg(Y|X)||_p <= b
 template <typename T>
 struct DC {
+    // Specify the degree sequence deg(Y|X) using the sets X and Y
     const set<T> X;
     const set<T> Y;
+    // Specify the Lp-norm to be used
     const double p;
+    // Specify the upper bound on the Lp-norm of the degree sequence *ON LOG SCALE*
+    // log_2 ||deg(Y|X)||_p <= b
     const double b;
 
     DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
+    // Note that this constructor always sets Y to be `X_ union Y_`
     : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {
         assert(p > 0.0);
         assert(b >= 0.0);
@@ -333,7 +342,7 @@ inline string name(int i) {
     return to_string(i);
 }
 
-// Given a set `X`, convert each element to a string and concatenate the strings.
+// Given a sorted set `X`, convert each element to a string and concatenate the strings.
 template <typename T>
 inline string set_name(const set<T> &X) {
     string s = "{";
@@ -348,6 +357,7 @@ inline string set_name(const set<T> &X) {
     return s;
 }
 
+// Print a degree constraint DC
 template <typename T>
 ostream& operator<<(ostream& os, const DC<T>& dc) {
     os << "log_2 ||deg(" << set_name(dc.Y) << "|" << set_name(dc.X) << ")||_" <<
@@ -355,25 +365,33 @@ ostream& operator<<(ostream& os, const DC<T>& dc) {
     return os;
 }
 
+// Generate a meaningful name for the variable specifying the `t`-flow from node `X` to node
+// `Y`. For context, just like in the simple DC bound, in the flow bound, we have a
+// different flow function for every query variable `t`. However, all the flows share the
+// same network structure
 template <typename T>
 inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
     return "f" + to_string(t) + "_" + set_name(X) + "->" + set_name(Y);
 }
 
+// Generate a meaningful name for the capacity constraint on the `t`-flow from `X` to `Y`
 template <typename T>
 inline string flow_capacity_con_name(int t, const set<T> &X, const set<T> &Y) {
     return "c" + to_string(t) + "_" + set_name(X) + "->" + set_name(Y);
 }
 
+// Generate a meaningful name for the flow conservation constraint on the `t`-flow at node
+// `Z`
 template <typename T>
 inline string flow_conservation_con_name(int t, const set<T> &Z) {
     return "e" + to_string(t) + "_" + set_name(Z);
 }
 
+// Generate a meaningful name for the variable specifying the coefficient of the `i`-th DC
 inline string dc_var_name(int i) {
     return "a" + to_string(i);
 }
-// However, in Release mode, we skip name generation and just use empty strings
+// In Release mode, we skip all name generation and just use empty strings everywhere
 #else
 template <typename T>
 inline string flow_var_name(int t, const set<T> &X, const set<T> &Y) {
@@ -395,10 +413,15 @@ inline string dc_var_name(int i) {
 }
 #endif
 
-// Given a directed multi-graph `G` (i.e. where we can have multiple edges `u -> v`):
-//  - if `G` is acyclic, return `true` along with a topological ordering of the vertices
+// Given a (weighted) directed multi-graph `G` (i.e. where we can have multiple edges `u ->
+// v` between the same pair of vertices `(u, v)`):
+//  - if `G` is acyclic, return `true` along with a topological ordering of the vertices.
 //  - otherwise, return `false` along an ordering of the vertices that is as close to a
-//    topological ordering as possible
+//    topological ordering as possible.
+//
+// The algorithm is greedy where we keep peeling off the vertex with the smallest weighted
+//    outdegree until the graph is empty. The weighted outdegree of a vertex v` is the sum
+//    of weights of outgoing edges from `v`
 template <typename T>
 pair<bool,vector<T>> approximate_topological_sort(
     const vector<T>& V,             // Vertices
@@ -408,8 +431,9 @@ pair<bool,vector<T>> approximate_topological_sort(
     assert(E.size() == W.size());
     for (auto &w : W)
         assert(w >= 0.0);
-    // The *weighted* outdegree of each vertex
+    // The weighted outdegree of each vertex
     map<T, double> out_degree;
+    // A map from each vertex to the incoming edges along with their weights
     map<T, vector<pair<T, double>>> in_edges;
     for (auto& v : V)
         out_degree[v] = 0.0;
@@ -425,12 +449,14 @@ pair<bool,vector<T>> approximate_topological_sort(
         in_edges[u].push_back(make_pair(v, w));
         ++i;
     }
+    // A sorted list of vertices based on their outdegrees
     set<pair<double, T>> Q;
     for (auto& p : out_degree) {
         Q.insert({p.second, p.first});
     }
     bool acyclic = true;
     vector<T> order;
+    // Keep peeling off the vertex with the smallest outdegree
     while (!Q.empty()) {
         auto it = Q.begin();
         if (it->first > 1e-6)
@@ -454,6 +480,7 @@ pair<bool,vector<T>> approximate_topological_sort(
     return {acyclic, order};
 }
 
+// An overload of the above method where all edges are assigned a weight of 1
 template <typename T>
 pair<bool,vector<T>> approximate_topological_sort(
     const vector<T>& V,
@@ -464,13 +491,25 @@ pair<bool,vector<T>> approximate_topological_sort(
 }
 
 
-// Instead of a directed multi-graph, now we are given a set of DCs
+// Instead of a (weighted) directed multi-graph, now we are given a set of DCs. Our goal is
+// to translate those DCs into a (weighted) directed multi-graph, and then find an
+// approximate topological ordering of the vertices.
+//  - `use_weighted_edges` is a Boolean flag that determines whether we want to construct a
+//  *weighted* graph or not
 template <typename T>
 pair<bool,vector<T>> approximate_topological_sort(
     const vector<T>& V, const vector<DC<T>>& dcs, bool use_weighted_edges = true
 ) {
     vector<pair<T, T>> E;
     vector<double> W;
+    // Given a DC `log_2 ||deg(Y|X)||_p <= b`, the "coverage" of this DC is defined as:
+    //    coverage := |X| / p + |Y|
+    // For every vertex `x` in `X` and every vertex `y` in `Y`, we add a directed edge from
+    // `x` to `y`:
+    // - If `use_weighted_edges` is false, then we set the weight to be 1.
+    // - Otherwise, we set the weight to be:
+    //      coverage / b
+    //   If `b = 0`, then we use a threshold to prevent division by zero
     for (auto& dc : dcs)
     {
         double w;
