@@ -1,3 +1,11 @@
+/******************************************************************************************/
+// An implementation of the flow bound with Lp-norm constraints on degree sequences.
+// The flow bound is a generalization of both:
+// - the simple DC bound: given by Equation (1) in [this paper](https://arxiv.org/pdf/2211.08381)
+// - the chain bound: described in Section 5.1 in [this paper](https://arxiv.org/pdf/1604.00111)
+//
+// The ENTRY POINT to this file is the `flow_bound()` function below.
+/******************************************************************************************/
 #include <iostream>
 #include <vector>
 #include <set>
@@ -15,20 +23,15 @@
 
 using namespace std;
 
-
 /******************************************************************************************/
-// NOTE: The main entry point to this file is the `flow_bound` function below
-/******************************************************************************************/
-
-
-/******************************************************************************************/
-// The following macro should be left undefined unless you want to enable debug mode:
+// The following macro can be used to enable debug output. It should be left UNDEFINED in
+// release mode, as it can significantly slow down the code
 // #define DEBUG_FLOW_BOUND
 /******************************************************************************************/
 
 
 //==========================================================================================
-// Generic interface for building and solving LPs using HiGHS
+// Generic interface for building and solving LPs using the HiGHS library
 //==========================================================================================
 
 // A variable has a name, lower bound, and upper bound.
@@ -39,7 +42,7 @@ struct Variable {
 };
 
 // A constraint has a name, lower bound, upper bound, and a sum of variables. The sum is
-// represented as a dictionary from variable names to coefficients.
+// represented as a dictionary from variable indices to coefficients.
 struct Constraint {
     const string name;
     const double lower_bound;
@@ -47,9 +50,9 @@ struct Constraint {
     unordered_map<int, double> sum;
 };
 
-// The objective has a boolean flag to indicate whether it is a maximization or minimization
+// The objective has a Boolean flag indicating whether it is a maximization or minimization
 // and a sum indicating the objective function. The sum is represented as a dictionary from
-// variables names to coefficients.
+// variable indices to coefficients.
 struct Objective {
     const bool maximize;
     unordered_map<int, double> sum;
@@ -78,18 +81,19 @@ public:
         return constraints.size() - 1;
     }
 
-    // Add `coefficient * variable` to the given constraint
+    // Add `a * v` to the constraint `c`
     void add_to_constraint(int c, int v, double a) {
         constraints.at(c).sum[v] += a;
     }
 
-    // Add `coefficient * variable` to the objective
+    // Add `a * v` to the objective
     void add_to_objective(int v, double a) {
         objective.sum[v] += a;
     }
 };
 
 #ifdef DEBUG_FLOW_BOUND
+// Output a variable
 ostream& operator<<(ostream& os, const Variable& v) {
     if (v.lower_bound != -INFINITY)
         os << v.lower_bound << " <= ";
@@ -99,6 +103,8 @@ ostream& operator<<(ostream& os, const Variable& v) {
     return os;
 }
 
+// Output a sum of variables. The vector `variables` can be used to map variable indices to
+// their names
 ostream& print_sum(
     ostream& os, const unordered_map<int, double>& sum, const vector<Variable>& variables
 ) {
@@ -116,6 +122,7 @@ ostream& print_sum(
     return os;
 }
 
+// Output a constraint
 ostream& print_constraint(
     ostream& os, const Constraint& c, const vector<Variable>& variables
 ) {
@@ -128,6 +135,7 @@ ostream& print_constraint(
     return os;
 }
 
+// Output an LP
 ostream& operator<<(ostream& os, const LP& lp) {
     os << "Linear Program:" << endl;
     os << (lp.objective.maximize ? "maximize" : "minimize") << " ";
@@ -152,17 +160,19 @@ pair<double,vector<double>> solve(const LP &p) {
     #ifdef DEBUG_FLOW_BOUND
     cout << p << endl;
     #endif
-    int n = p.variables.size();
-    int m = p.constraints.size();
+    int n = p.variables.size();    // Number of variables
+    int m = p.constraints.size();  // Number of constraints
 
     HighsModel model;
     model.lp_.num_col_ = n;
     model.lp_.num_row_ = m;
+    // Set the objective
     model.lp_.sense_ = p.objective.maximize ? ObjSense::kMaximize : ObjSense::kMinimize;
     model.lp_.offset_ = 0.0;
     model.lp_.col_cost_.resize(n);
     for (const auto& v : p.objective.sum)
         model.lp_.col_cost_[v.first] = v.second;
+    // Set bounds on variables
     model.lp_.col_lower_.resize(n);
     model.lp_.col_upper_.resize(n);
     int i = 0;
@@ -171,6 +181,7 @@ pair<double,vector<double>> solve(const LP &p) {
         model.lp_.col_upper_[i] = v.upper_bound;
         ++i;
     }
+    // Set bounds on constraints
     model.lp_.row_lower_.resize(m);
     model.lp_.row_upper_.resize(m);
     i = 0;
@@ -179,6 +190,7 @@ pair<double,vector<double>> solve(const LP &p) {
         model.lp_.row_upper_[i] = c.upper_bound;
         ++i;
     }
+    // Set the constraint matrix
     model.lp_.a_matrix_.format_ = MatrixFormat::kRowwise;
     model.lp_.a_matrix_.start_.resize(m + 1);
     i = 0;
@@ -225,25 +237,30 @@ pair<double,vector<double>> solve(const LP &p) {
     assert(has_values);
     const HighsSolution& solution = highs.getSolution();
 
+    // Return a pair of the objective value and the variable values
     return make_pair(obj, solution.col_value);
 }
 
 // A testcase for the LP interface
 void test_lp1() {
     LP lp(true);
-    int x = lp.add_variable("x", 0.0, INFINITY);
-    int y = lp.add_variable("y", 0.0, INFINITY);
-    int z = lp.add_variable("z", 0.0, INFINITY);
-    int t = lp.add_variable("t", 0.0, 2.0);
+    int x = lp.add_variable("x", 0.0, INFINITY);    // x >= 0
+    int y = lp.add_variable("y", 0.0, INFINITY);    // y >= 0
+    int z = lp.add_variable("z", 0.0, INFINITY);    // z >= 0
+    int t = lp.add_variable("t", 0.0, 2.0);         // 0 <= t <= 2
+    // Add a constraint x + y <= 1
     int c1 = lp.add_constraint("c1", -INFINITY, 1.0);
     lp.add_to_constraint(c1, x, 1.0);
     lp.add_to_constraint(c1, y, 1.0);
+    // Add a constraint y + z <= 1
     int c2 = lp.add_constraint("c2", -INFINITY, 1.0);
     lp.add_to_constraint(c2, y, 1.0);
     lp.add_to_constraint(c2, z, 1.0);
     int c3 = lp.add_constraint("c3", -INFINITY, 1.0);
+    // Add a constraint x + z <= 1
     lp.add_to_constraint(c3, x, 1.0);
     lp.add_to_constraint(c3, z, 1.0);
+    // Set the objective to maximize x + y + z + t
     lp.add_to_objective(x, 1.0);
     lp.add_to_objective(y, 1.0);
     lp.add_to_objective(z, 1.0);
@@ -252,6 +269,7 @@ void test_lp1() {
     auto& obj = sol.first;
     auto& val = sol.second;
     assert(abs(obj - 3.5) < 1e-7);
+    // The optimal values are x = y = z = 1/2, t = 2
     assert(abs(val[x] - 0.5) < 1e-7);
     assert(abs(val[y] - 0.5) < 1e-7);
     assert(abs(val[z] - 0.5) < 1e-7);
