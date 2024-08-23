@@ -1252,6 +1252,20 @@ void test_flow_bound_projection3() {
     assert(isinf(p) && p > 0);
 }
 
+void test_flow_bound_projection4() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 10 },
+        { {"x", "y"}, {"z", "t"}, INFINITY, 1 },
+    };
+    vector<string> vars = { "x", "w" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(isinf(p) && p > 0);
+    vector<string> vars2 = {"x", "y", "t"};
+    p = flow_bound(dcs, vars2, false);
+    assert(abs(p - 11) < 1e-7);
+}
+
 
 
 //==========================================================================================
@@ -1390,6 +1404,7 @@ int main() {
     test_flow_bound_projection1();
     test_flow_bound_projection2();
     test_flow_bound_projection3();
+    test_flow_bound_projection4();
 
     test_approximate_topological_sort1();
     test_approximate_topological_sort2();
