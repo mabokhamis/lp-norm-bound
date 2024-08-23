@@ -1222,6 +1222,36 @@ void test_flow_bound_projection1() {
     assert(abs(p - 1.5) < 1e-7);
 }
 
+void test_flow_bound_projection2() {
+    vector<DC<string>> dcs = {
+        { {}, {"x"}, 1, 10 },
+        { {"x"}, {"y"}, INFINITY, 1 },
+        { {"y"}, {"z"}, INFINITY, 1 },
+    };
+    vector<string> vars = { "x", "z" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 12) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(isinf(p) && p > 0);
+}
+
+void test_flow_bound_projection3() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 10 },
+        { {"x", "y"}, {"z"}, INFINITY, 1 },
+        { {"y", "z"}, {"t"}, INFINITY, 1 },
+        { {"x"}, {"z"}, INFINITY, 10},
+        { {"z"}, {"t"}, INFINITY, 10},
+    };
+    vector<string> vars = { "x", "y", "t" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 30) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(isinf(p) && p > 0);
+}
+
 
 
 //==========================================================================================
@@ -1358,6 +1388,8 @@ int main() {
     test_flow_bound_JOB_Q1();
 
     test_flow_bound_projection1();
+    test_flow_bound_projection2();
+    test_flow_bound_projection3();
 
     test_approximate_topological_sort1();
     test_approximate_topological_sort2();
