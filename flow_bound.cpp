@@ -291,6 +291,14 @@ set<T> set_union(const set<T>& X, const set<T>& Y) {
     return Z;
 }
 
+// Intersection of two sets
+template <typename T>
+set<T> set_intersection(const set<T>& X, const set<T>& Y) {
+    set<T> Z;
+    set_intersection(X.begin(), X.end(), Y.begin(), Y.end(), inserter(Z, Z.end()));
+    return Z;
+}
+
 // Set difference of two sets
 template <typename T>
 set<T> set_difference(const set<T>& X, const set<T>& Y) {
@@ -531,9 +539,10 @@ pair<bool,vector<T>> approximate_topological_sort(
 // The core data structure that is used to construct the LP for the flow bound
 template <typename T>
 struct LpNormLP {
-    // The input DCs and variables
+    // The input DCs and target variables
     const vector<DC<T>> dcs;
-    const vector<T> vars;
+    const vector<T> target_vars;
+    set<T> target_var_set;
 
     // A flag that determines whether we want to restrict the flow bound to become the
     // weaker chain bound
@@ -579,20 +588,19 @@ struct LpNormLP {
 
     LpNormLP(
         const vector<DC<T>>& dcs_,
-        const vector<T>& vars_,
+        const vector<T>& target_vars_,
         bool use_only_chain_bound_,
         bool use_weighted_edges_
-    ) : dcs(dcs_), vars(vars_), use_only_chain_bound(use_only_chain_bound_),
+    ) : dcs(dcs_), target_vars(target_vars_), use_only_chain_bound(use_only_chain_bound_),
         use_weighted_edges(use_weighted_edges_), lp(false) {
 
-        // Verify that the input DCs and variables make sense
-        verify_input();
+        for (const auto& v : target_vars) {
+            // If the following assertion fails, this means that the input variables
+            // `target_vars` contain duplicates
+            assert(target_var_set.find(v) == target_var_set.end());
 
-        // If all degrees are acyclic (including the simple ones), then the flow bound
-        // becomes equivalent to the chain bound, and it seems that the chain bound is more
-        // efficient in this case
-        if (approximate_topological_sort(vars, dcs, use_weighted_edges).first)
-            use_only_chain_bound = true;
+            target_var_set.insert(v);
+        }
 
         // Separate DCs into simple and non-simple
         for (const auto& dc : dcs)
@@ -601,28 +609,18 @@ struct LpNormLP {
             else
                 non_simple_dcs.push_back(dc);
         // Compute an approximate topological ordering based on the non-simple DCs
-        auto p = approximate_topological_sort(vars, non_simple_dcs, use_weighted_edges);
+        vector<DC<T>> projected_non_simple_dcs;
+        for (const auto& dc : non_simple_dcs) {
+            auto p = target_projected_dc(dc);
+            if (p.first)
+                projected_non_simple_dcs.push_back(p.second);
+        }
+        auto p = approximate_topological_sort(
+            target_vars, projected_non_simple_dcs, use_weighted_edges);
         is_acyclic = p.first;
         var_order = p.second;
         for (size_t i = 0; i < var_order.size(); ++i) {
             var_index[var_order[i]] = i;
-        }
-    }
-
-    // Verify the validity of the input DCs and vars
-    void verify_input() {
-        set<T> var_set;
-        for (const auto& v : vars) {
-            // If the following assertion fails, this means that the input variables `vars`
-            // contain duplicates
-            assert(var_set.find(v) == var_set.end());
-
-            var_set.insert(v);
-        }
-        for (const auto& dc : dcs) {
-            // For every DC, both sets `X` and `Y` must be subsets of `vars`
-            assert(is_subset(dc.X, var_set));
-            assert(is_subset(dc.Y, var_set));
         }
     }
 
@@ -631,18 +629,31 @@ struct LpNormLP {
         return !use_only_chain_bound && dc.X.size() <= 1;
     }
 
+    // Project the given DC onto the target variables and return the resulting DC
+    pair<bool, DC<T>> target_projected_dc(const DC<T>& dc) {
+        if (!is_subset(dc.X, target_var_set))
+            return {false, DC<T>({}, {}, 1.0, 0.0)};
+        return {true, DC<T>(dc.X, set_intersection(dc.Y, target_var_set), dc.p, dc.b)};
+    }
+
     // Given a DC `log_2 ||deg(Y|X)||_p <= b`, return  another DC
     // `log_2 ||deg(Y2|X)||_p <= b`, where `Y2` is the subset of `Y` that only contains
     // those variables that come after `X in the approximate topological ordering `var_order`
-    DC<T> order_consistent_dc(const DC<T>& dc) {
+    pair<bool, DC<T>> order_consistent_dc(const DC<T>& dc) {
         int last_x = -1;
-        for (const auto& x : dc.X)
+        for (const auto& x : dc.X) {
+            if (var_index.find(x) == var_index.end())
+                return {false, DC<T>({}, {}, 1.0, 0.0)};
             last_x = max(last_x, var_index.at(x));
+        }
         set<T> new_Y;
-        for (const auto& y : dc.Y)
+        for (const auto& y : dc.Y) {
+            if (var_index.find(y) == var_index.end())
+                continue;
             if (var_index.at(y) > last_x)
                 new_Y.insert(y);
-        return DC<T>(dc.X, new_Y, dc.p, dc.b);
+        }
+        return {true, DC<T>(dc.X, new_Y, dc.p, dc.b)};
     }
 
     // Add a flow variable flow_var[(t, X, Y)], which specifies the `t`-th flow from `X` to
@@ -728,7 +739,7 @@ struct LpNormLP {
 
     // Construct the flow network based on the *simple* DCs
     void construct_flow_network() {
-        for (auto v : vars)
+        for (auto v : target_vars)
             vertices.insert({v});
         for (auto &dc : simple_dcs) {
             // Add edge from X to Y
@@ -754,12 +765,13 @@ struct LpNormLP {
         }
 
         // For every t-flow
-        for (size_t t = 0; t < vars.size(); ++t) {
+        for (size_t t = 0; t < target_vars.size(); ++t) {
             // For every vertex `Z`, add a flow conservation constraint
             for (const auto &Z : vertices) {
                 if (Z.empty())
                     continue;
-                double lower_bound = (Z.size() == 1 && *Z.begin() == vars[t]) ? 1.0 : 0.0;
+                double lower_bound = (Z.size() == 1 && *Z.begin() == target_vars[t]) ?
+                    1.0 : 0.0;
                 add_flow_conservation_con(t, Z, lower_bound, INFINITY);
             }
 
@@ -814,7 +826,10 @@ struct LpNormLP {
                     // `var_order`. Then, this DC contributes a coefficient of 1 to the flow
                     // conservation constraint for every y in Y2 and a coefficient of 1/p to
                     // the flow conservation constraint for every x in X
-                    DC<T> dc = order_consistent_dc(dcs[i]);
+                    auto p = order_consistent_dc(dcs[i]);
+                    if (!p.first)
+                        continue;
+                    const DC<T>& dc = p.second;
                     for (const auto& y : set_difference(dc.Y, dc.X)) {
                         int e_y = get_flow_conservation_con(t, {y});
                         lp.add_to_constraint(e_y, ai, 1.0);
@@ -856,34 +871,28 @@ DC<T2> transform_DC(const DC<T1>& dc, const map<T1, T2>& f) {
 
 // Convert DCs from string to integer representation
 pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
-    const vector<DC<string>>& dcs, const vector<string>& vars
+    const vector<DC<string>>& dcs, const vector<string>& target_vars
 ) {
-    // We sort the variable names in order to ensure that their assigned numbers will
-    // maintain the same relative order as the original names. This is needed to ensure that
-    // the behavior of subsequent code does not change when var names are replaced by
-    // integers, even in situations where there is some arbitrary tie breaking (e.g. based
-    // on string alphabetical ordering)
-    vector<string> sorted_vars = vars;
-    sort(sorted_vars.begin(), sorted_vars.end());
-    map<string, int> var_map;
-    for (size_t i = 0; i < sorted_vars.size(); ++i) {
-        const string& v = sorted_vars[i];
-        // Variable names in `vars` must be unique
-        assert(var_map.find(v) == var_map.end());
-        var_map[v] = i;
+    set<string> var_set;
+    copy(target_vars.begin(), target_vars.end(), inserter(var_set, var_set.end()));
+    for (const auto& dc : dcs) {
+        copy(dc.X.begin(), dc.X.end(), inserter(var_set, var_set.end()));
+        copy(dc.Y.begin(), dc.Y.end(), inserter(var_set, var_set.end()));
     }
+    vector<string> vars(var_set.begin(), var_set.end());
+    map<string, int> var_map;
+    for (size_t i = 0; i < vars.size(); ++i)
+        var_map[vars[i]] = i;
 
     vector<DC<int>> new_dcs;
-    vector<int> new_vars;
-    for (const auto& dc : dcs) {
+    for (const auto& dc : dcs)
         new_dcs.push_back(transform_DC(dc, var_map));
-    }
 
-    for (const auto& v : vars) {
-        new_vars.push_back(var_map[v]);
-    }
+    vector<int> new_target_vars;
+    for (const auto& v : target_vars)
+        new_target_vars.push_back(var_map[v]);
 
-    return make_pair(new_dcs, new_vars);
+    return make_pair(new_dcs, new_target_vars);
 }
 #endif
 
@@ -891,8 +900,11 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 // NOTE: This is the main entry point to this file
 /*************************************************/
 double flow_bound(
+    // The degree constraints
     const vector<DC<string>> &dcs,
-    const vector<string> &vars,
+    // The target set of variables whose cardinality we want to bound.
+    // `target_vars` could be a proper subset of the variables in the degree constraints.
+    const vector<string> &target_vars,
 
     //---------------------------------------------------------------------------
     // The following optional parameters are for *TESTING PURPOSES ONLY*. They should be
@@ -915,10 +927,10 @@ double flow_bound(
         cout << "    " << dc << endl;
     }
     cout << endl;
-    LpNormLP<string> lp(dcs, vars, use_only_chain_bound, use_weighted_edges);
+    LpNormLP<string> lp(dcs, target_vars, use_only_chain_bound, use_weighted_edges);
     #else
     // In release mode, we convert the strings to numbers
-    auto int_dcs_vars = transform_dcs_to_int(dcs, vars);
+    auto int_dcs_vars = transform_dcs_to_int(dcs, target_vars);
     LpNormLP<int> lp(
         int_dcs_vars.first, int_dcs_vars.second, use_only_chain_bound, use_weighted_edges);
     #endif
