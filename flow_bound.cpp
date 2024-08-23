@@ -1205,6 +1205,23 @@ void test_flow_bound_JOB_Q1() {
     assert(abs(p-7017) < 1);
 }
 
+void test_flow_bound_projection1() {
+    vector<DC<string>> dcs = {
+        { {}, {"x", "y"}, 1, 1 },
+        { {}, {"x", "z"}, 1, 1 },
+        { {}, {"x", "t"}, 1, 1 },
+        { {}, {"y", "z"}, 1, 1 },
+        { {}, {"y", "t"}, 1, 1 },
+        { {}, {"z", "t"}, 1, 1 },
+    };
+    vector<string> vars = { "y", "z", "t" };
+    double p;
+    p = flow_bound(dcs, vars, false);
+    assert(abs(p - 1.5) < 1e-7);
+    p = flow_bound(dcs, vars, true);
+    assert(abs(p - 1.5) < 1e-7);
+}
+
 
 
 //==========================================================================================
@@ -1339,6 +1356,8 @@ int main() {
     test_flow_bound10();
     test_flow_bound_infeasible();
     test_flow_bound_JOB_Q1();
+
+    test_flow_bound_projection1();
 
     test_approximate_topological_sort1();
     test_approximate_topological_sort2();
