@@ -171,14 +171,14 @@ pair<double,vector<double>> solve(const LP &p) {
     model.lp_.offset_ = 0.0;
     model.lp_.col_cost_.resize(n);
     for (const auto& v : p.objective.sum)
-        model.lp_.col_cost_[v.first] = v.second;
+        model.lp_.col_cost_.at(v.first) = v.second;
     // Set bounds on variables
     model.lp_.col_lower_.resize(n);
     model.lp_.col_upper_.resize(n);
     int i = 0;
     for (const auto& v : p.variables) {
-        model.lp_.col_lower_[i] = v.lower_bound;
-        model.lp_.col_upper_[i] = v.upper_bound;
+        model.lp_.col_lower_.at(i) = v.lower_bound;
+        model.lp_.col_upper_.at(i) = v.upper_bound;
         ++i;
     }
     // Set bounds on constraints
@@ -186,8 +186,8 @@ pair<double,vector<double>> solve(const LP &p) {
     model.lp_.row_upper_.resize(m);
     i = 0;
     for (const auto& c : p.constraints) {
-        model.lp_.row_lower_[i] = c.lower_bound;
-        model.lp_.row_upper_[i] = c.upper_bound;
+        model.lp_.row_lower_.at(i) = c.lower_bound;
+        model.lp_.row_upper_.at(i) = c.upper_bound;
         ++i;
     }
     // Set the constraint matrix
@@ -195,14 +195,14 @@ pair<double,vector<double>> solve(const LP &p) {
     model.lp_.a_matrix_.start_.resize(m + 1);
     i = 0;
     for (const auto& c : p.constraints) {
-        model.lp_.a_matrix_.start_[i] = model.lp_.a_matrix_.index_.size();
+        model.lp_.a_matrix_.start_.at(i) = model.lp_.a_matrix_.index_.size();
         for (const auto& t : c.sum) {
             model.lp_.a_matrix_.index_.push_back(t.first);
             model.lp_.a_matrix_.value_.push_back(t.second);
         }
         ++i;
     }
-    model.lp_.a_matrix_.start_[i] = model.lp_.a_matrix_.index_.size();
+    model.lp_.a_matrix_.start_.at(i) = model.lp_.a_matrix_.index_.size();
 
     // Create a Highs instance
     Highs highs;
@@ -238,7 +238,7 @@ pair<double,vector<double>> solve(const LP &p) {
     const HighsSolution& solution = highs.getSolution();
 
     // Return a pair of the objective value and the variable values
-    return make_pair(obj, solution.col_value);
+    return make_pair(obj, vector<double>(solution.col_value));
 }
 
 // A testcase for the LP interface
