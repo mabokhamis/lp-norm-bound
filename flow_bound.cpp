@@ -238,7 +238,7 @@ pair<double,vector<double>> solve(const LP &p) {
     const HighsSolution& solution = highs.getSolution();
 
     // Return a pair of the objective value and the variable values
-    return make_pair(obj, vector<double>(solution.col_value));
+    return make_pair(obj, solution.col_value);
 }
 
 // A testcase for the LP interface
