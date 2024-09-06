@@ -1671,12 +1671,13 @@ void test_flow_bound_job_join_1(){
         "h_0MC_1_2"
     };
 
-    cout << "Testing JobJoin Q1" << endl;
+    double p1 = flow_bound(dcs, vars);
+    assert(abs(p1 - 29.21648) < 1e-4);
 
-    double objective = flow_bound(dcs, vars, false);
-    double estimate = pow(2, objective);
-    cout << "Flow bound (exponent): " << objective << endl;
-    cout << "Estimate: " << estimate << endl;
+    double p2 = elemental_shannon_bound(dcs, vars);
+    assert(abs(p2 - 29.21648) < 1e-4);
+
+    assert(abs(p1 - p2) < 1e-7);
 }
 
 
