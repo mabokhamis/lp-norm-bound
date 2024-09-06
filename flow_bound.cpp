@@ -143,13 +143,9 @@ ostream& operator<<(ostream& os, const LP& lp) {
     os << "subject to" << endl;
     for (const auto& v : lp.variables)
         os << "    " << v << endl;
-    map<const string, const Constraint> sorted_constraints;
     for (const auto& c : lp.constraints) {
-        sorted_constraints.insert({c.name, c});
-    }
-    for (const auto& t : sorted_constraints) {
         os << "    ";
-        print_constraint(os, t.second, lp.variables) << endl;
+        print_constraint(os, c, lp.variables) << endl;
     }
     return os;
 }
@@ -227,8 +223,13 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // Get the model status
     const HighsModelStatus& model_status = highs.getModelStatus();
+
+    // TODO: The following corner case is special to the LP corresponding to the flow bound
     if (model_status==HighsModelStatus::kInfeasible)
         return make_pair(INFINITY, vector<double>());
+    if (model_status==HighsModelStatus::kUnbounded)
+        return make_pair(p.objective.maximize ? INFINITY : -INFINITY, vector<double>());
+
     assert(model_status==HighsModelStatus::kOptimal);
 
     const HighsInfo& info = highs.getInfo();
@@ -943,6 +944,126 @@ double flow_bound(
 
 
 //==========================================================================================
+// Lp-norm bound based on (elemental) Shannon inequalities
+//==========================================================================================
+
+template <typename T>
+struct ShannonLP {
+    // The input DCs and target variables
+    const vector<DC<T>> dcs;
+    const vector<T> target_vars;
+
+    vector<T> vars;
+    map<T,int> var_map;
+
+    LP lp;
+
+    ShannonLP(const vector<DC<T>>& dcs_, const vector<T>& target_vars_)
+        : dcs(dcs_), target_vars(target_vars_), lp(true) {
+        set<string> var_set;
+        copy(target_vars.begin(), target_vars.end(), inserter(var_set, var_set.end()));
+        for (const auto& dc : dcs) {
+            copy(dc.X.begin(), dc.X.end(), inserter(var_set, var_set.end()));
+            copy(dc.Y.begin(), dc.Y.end(), inserter(var_set, var_set.end()));
+        }
+        copy(var_set.begin(), var_set.end(), back_inserter(vars));
+        for (size_t i = 0; i < vars.size(); ++i)
+            var_map[vars[i]] = i;
+    }
+
+    int zip(const set<T>& U) {
+        int z = 0;
+        for (const auto& u : U)
+            z |= 1 << var_map.at(u);
+        return z;
+    }
+
+    set<T> unzip(int z) {
+        set<T> U;
+        int i = 0;
+        while (z != 0) {
+            if ((z & 1) != 0)
+                U.insert(vars[i]);
+            z >>= 1;
+            ++i;
+        }
+        return U;
+    }
+
+    string name(int z) {
+        set<T> U = unzip(z);
+        string n = "h(";
+        bool first = true;
+        for (const auto& u : U) {
+            if (first)
+                first = false;
+            else
+                n += ",";
+            n += u;
+        }
+        return n + ")";
+    }
+
+    void construct_lp() {
+        int n = vars.size();
+        int N = 1 << n;
+
+        lp.add_variable("h()", 0.0, 0.0);
+        for (int i = 1; i < N; ++i)
+            lp.add_variable(name(i), -INFINITY, INFINITY);
+
+        int Y = N - 1;
+        for (int y = 0; y < n; ++y){
+            int X = Y & ~(1 << y);
+            int mon_con = lp.add_constraint("monotonicity", 0.0, INFINITY);
+            lp.add_to_constraint(mon_con, Y, 1.0);
+            lp.add_to_constraint(mon_con, X, -1.0);
+        }
+
+        for (int X = 0; X < N; ++X)
+            for (int y = 0; y < n; ++y)
+                for (int z = y + 1; z < n; ++z) {
+                    if (((X & (1 << y)) != 0) || ((X & (1 << z)) != 0))
+                        continue;
+                    int Y = X | (1 << y);
+                    int Z = X | (1 << z);
+                    int W = Y | (1 << z);
+                    int sub_con = lp.add_constraint("submodularity", 0.0, INFINITY);
+                    lp.add_to_constraint(sub_con, Y, 1.0);
+                    lp.add_to_constraint(sub_con, Z, 1.0);
+                    lp.add_to_constraint(sub_con, X, -1.0);
+                    lp.add_to_constraint(sub_con, W, -1.0);
+                }
+
+        for (const auto& dc : dcs) {
+            int X = zip(dc.X);
+            int Y = zip(dc.Y);
+            int con = lp.add_constraint("DC", -INFINITY, dc.b);
+            lp.add_to_constraint(con, Y, 1.0);
+            double cX = -1.0 + 1.0 / dc.p;
+            if (X != 0 && cX != 0.0)
+                lp.add_to_constraint(con, X, cX);
+        }
+
+        int X = zip(set<T>(target_vars.begin(), target_vars.end()));
+        lp.add_to_objective(X, 1.0);
+    }
+};
+
+// The Lp-norm bound based on (elemental) Shannon inequalities
+double elemental_shannon_bound(
+    const vector<DC<string>> &dcs,
+    const vector<string> &target_vars
+) {
+    ShannonLP<string> lp(dcs, target_vars);
+    lp.construct_lp();
+    #ifdef DEBUG_FLOW_BOUND
+    cout << lp.lp << endl;
+    #endif
+    return solve(lp.lp).first;
+}
+
+//==========================================================================================
 // Testcases for the flow_bound function
 //==========================================================================================
 
@@ -958,6 +1079,9 @@ void test_flow_bound1() {
     assert(abs(p - 1.5) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 1.5) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
 }
 
 void test_flow_bound2() {
@@ -971,6 +1095,9 @@ void test_flow_bound2() {
     p = flow_bound(dcs, vars, false);
     assert(abs(p - 1.5) < 1e-7);
     p = flow_bound(dcs, vars, true);
+    assert(abs(p - 1.5) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -986,6 +1113,9 @@ void test_flow_bound3() {
     assert(abs(p - 2.0) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 3.0) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 2.0) < 1e-7);
 }
 
 void test_flow_bound4() {
@@ -1001,6 +1131,9 @@ void test_flow_bound4() {
     p = flow_bound(dcs, vars, false);
     assert(abs(p - 1.5) < 1e-7);
     p = flow_bound(dcs, vars, true);
+    assert(abs(p - 1.5) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
     assert(abs(p - 1.5) < 1e-7);
 }
 
@@ -1018,6 +1151,9 @@ void test_flow_bound5() {
     assert(abs(p - 2) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 2) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
 }
 
 void test_flow_bound6() {
@@ -1034,6 +1170,9 @@ void test_flow_bound6() {
     p = flow_bound(dcs, vars, false);
     assert(abs(p - 6) < 1e-7);
     p = flow_bound(dcs, vars, true);
+    assert(abs(p - 6) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
     assert(abs(p - 6) < 1e-7);
 }
 
@@ -1065,6 +1204,9 @@ void test_flow_bound7() {
     assert(isinf(p) && p > 0);
     p = flow_bound(dcs, vars, true, true);
     assert(abs(p - 6) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 6) < 1e-7);
 }
 
 void test_flow_bound8() {
@@ -1082,6 +1224,9 @@ void test_flow_bound8() {
     assert(abs(p - 3.5) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 3.5) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 3.5) < 1e-7);
 }
 
 void test_flow_bound9() {
@@ -1097,6 +1242,9 @@ void test_flow_bound9() {
     assert(abs(p - 2.7 * 3) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 2.7 * (4 + 2.0/3.0)) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 2.7 * 3) < 1e-7);
 }
 
 void test_flow_bound10() {
@@ -1112,6 +1260,9 @@ void test_flow_bound10() {
     assert(abs(p - 2.7 * 4) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 2.7 * 5.75) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 2.7 * 4) < 1e-7);
 }
 
 void test_flow_bound_infeasible() {
@@ -1126,6 +1277,9 @@ void test_flow_bound_infeasible() {
     p = flow_bound(dcs, vars, false);
     assert(isinf(p) && p > 0);
     p = flow_bound(dcs, vars, true);
+    assert(isinf(p) && p > 0);
+
+    p = elemental_shannon_bound(dcs, vars);
     assert(isinf(p) && p > 0);
 }
 
@@ -1203,6 +1357,9 @@ void test_flow_bound_JOB_Q1() {
     assert(abs(p-7017) < 1);
     p = pow(2, flow_bound(dcs, vars, true));
     assert(abs(p-7017) < 1);
+
+    p = pow(2, elemental_shannon_bound(dcs, vars));
+    assert(abs(p-7017) < 1);
 }
 
 void test_flow_bound_projection1() {
@@ -1220,6 +1377,9 @@ void test_flow_bound_projection1() {
     assert(abs(p - 1.5) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(abs(p - 1.5) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 1.5) < 1e-7);
 }
 
 void test_flow_bound_projection2() {
@@ -1234,6 +1394,9 @@ void test_flow_bound_projection2() {
     assert(abs(p - 12) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(isinf(p) && p > 0);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 12) < 1e-7);
 }
 
 void test_flow_bound_projection3() {
@@ -1250,6 +1413,9 @@ void test_flow_bound_projection3() {
     assert(abs(p - 30) < 1e-7);
     p = flow_bound(dcs, vars, true);
     assert(isinf(p) && p > 0);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 12) < 1e-7);
 }
 
 void test_flow_bound_projection4() {
@@ -1261,9 +1427,256 @@ void test_flow_bound_projection4() {
     double p;
     p = flow_bound(dcs, vars, false);
     assert(isinf(p) && p > 0);
+
+    p = elemental_shannon_bound(dcs, vars);
+    assert(isinf(p) && p > 0);
+
     vector<string> vars2 = {"x", "y", "t"};
     p = flow_bound(dcs, vars2, false);
     assert(abs(p - 11) < 1e-7);
+
+    p = elemental_shannon_bound(dcs, vars2);
+    assert(abs(p - 11) < 1e-7);
+}
+
+void test_flow_bound_job_join_1(){
+    vector<DC<string>> dcs = {
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 2.0, 1.0},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 1, 2.0},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 3.0, 0.6666666666666666},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 4.0, 0.5},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 5.0, 0.4},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 6.0, 0.3333333333333333},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 7.0, 0.2857142857142857},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 8.0, 0.25},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 9.0, 0.2222222222222222},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 10.0, 0.2},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 11.0, 0.18181818181818182},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 12.0, 0.16666666666666666},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 13.0, 0.15384615384615385},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 14.0, 0.14285714285714285},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 15.0, 0.13333333333333333},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 16.0, 0.125},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 17.0, 0.11764705882352941},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 18.0, 0.1111111111111111},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 19.0, 0.10526315789473684},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 20.0, 0.1},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 21.0, 0.09523809523809523},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 22.0, 0.09090909090909091},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 23.0, 0.08695652173913043},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 24.0, 0.08333333333333333},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 25.0, 0.08},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 26.0, 0.07692307692307693},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 27.0, 0.07407407407407407},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 28.0, 0.07142857142857142},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 29.0, 0.06896551724137931},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, 30.0, 0.06666666666666667},
+        {{"h_1"}, {"h_1", "h_0CT_1"}, INFINITY, 0.0},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 2.0, 3.41009},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 1, 6.82018},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 3.0, 2.2733933333333334},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 4.0, 1.705045},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 5.0, 1.364036},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 6.0, 1.1366966666666667},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 7.0, 0.9743114285714285},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 8.0, 0.8525225},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 9.0, 0.7577977777777778},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 10.0, 0.682018},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 11.0, 0.6200163636363636},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 12.0, 0.5683483333333333},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 13.0, 0.5246292307692307},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 14.0, 0.48715571428571425},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 15.0, 0.4546786666666666},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 16.0, 0.42626125},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 17.0, 0.4011870588235294},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 18.0, 0.3788988888888889},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 19.0, 0.35895684210526313},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 20.0, 0.341009},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 21.0, 0.32477047619047617},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 22.0, 0.3100081818181818},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 23.0, 0.29652956521739127},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 24.0, 0.28417416666666667},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 25.0, 0.27280719999999997},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 26.0, 0.26231461538461537},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 27.0, 0.25259925925925925},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 28.0, 0.24357785714285712},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 29.0, 0.23517862068965517},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, 30.0, 0.2273393333333333},
+        {{"h_3"}, {"h_3", "h_0IT_3"}, INFINITY, 0.0},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 2.0, 11.88965},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 1, 21.3151},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 3.0, 9.249933333333333},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 4.0, 8.149925},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 5.0, 7.57144},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 6.0, 7.227833333333333},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 7.0, 7.010671428571428},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 8.0, 6.8689875},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 9.0, 6.775055555555555},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 10.0, 6.71216},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 11.0, 6.669636363636363},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 12.0, 6.640525},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 13.0, 6.620276923076923},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 14.0, 6.605914285714285},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 15.0, 6.595513333333333},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 16.0, 6.5878125},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 17.0, 6.582000000000001},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 18.0, 6.5775},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 19.0, 6.573947368421052},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 20.0, 6.57115},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 21.0, 6.5688571428571425},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 22.0, 6.566954545454546},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 23.0, 6.565391304347826},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 24.0, 6.564041666666667},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 25.0, 6.56292},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 26.0, 6.561961538461538},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 27.0, 6.561111111111111},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 28.0, 6.560392857142857},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 29.0, 6.559758620689656},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, 30.0, 6.559200000000001},
+        {{"h_2"}, {"h_2", "h_0MC_1_2"}, INFINITY, 0.0},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 2.0, 20.81555},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 1, 21.3151},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 3.0, 20.64923333333333},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 4.0, 20.5663},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 5.0, 20.5166},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 6.0, 20.483666666666668},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 7.0, 20.460285714285714},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 8.0, 20.442875},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 9.0, 20.429333333333332},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 10.0, 20.4186},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 11.0, 20.40990909090909},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 12.0, 20.402666666666665},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 13.0, 20.396692307692305},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 14.0, 20.39157142857143},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 15.0, 20.387133333333335},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 16.0, 20.383375},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 17.0, 20.380058823529414},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 18.0, 20.377111111111113},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 19.0, 20.374578947368423},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 20.0, 20.372300000000003},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 21.0, 20.370238095238093},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 22.0, 20.368409090909093},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 23.0, 20.36678260869565},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 24.0, 20.365333333333332},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 25.0, 20.364},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 26.0, 20.36276923076923},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 27.0, 20.361666666666665},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 28.0, 20.360678571428572},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 29.0, 20.359758620689654},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, 30.0, 20.358933333333333},
+        {{"h_1"}, {"h_1", "h_0MC_1_2"}, INFINITY, 0.0},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 2.0, 10.9908},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 1, 20.3963},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 3.0, 7.855666666666667},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 4.0, 6.288175},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 5.0, 5.3477},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 6.0, 4.720766666666667},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 7.0, 4.273014285714286},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 8.0, 3.9372625},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 9.0, 3.6761888888888894},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 10.0, 3.4674300000000002},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 11.0, 3.296727272727273},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 12.0, 3.1546083333333335},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 13.0, 3.0345153846153847},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 14.0, 2.931771428571429},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 15.0, 2.842966666666667},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 16.0, 2.76555},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 17.0, 2.697605882352941},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 18.0, 2.6376388888888886},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 19.0, 2.584505263157895},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 20.0, 2.537315},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 21.0, 2.495342857142857},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 22.0, 2.4580363636363636},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 23.0, 2.424917391304348},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 24.0, 2.3955958333333336},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 25.0, 2.36972},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 26.0, 2.346953846153846},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 27.0, 2.326977777777778},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 28.0, 2.309467857142857},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 29.0, 2.2941103448275864},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, 30.0, 2.2806066666666664},
+        {{"h_2"}, {"h_2", "h_0MI.IDX_2_3"}, INFINITY, 0.0},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 2.0, 19.6035},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 1, 20.3963},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 3.0, 19.339366666666667},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 4.0, 19.207275},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 5.0, 19.12804},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 6.0, 19.075166666666664},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 7.0, 19.03742857142857},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 8.0, 19.009125},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 9.0, 18.98711111111111},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 10.0, 18.9695},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 11.0, 18.95509090909091},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 12.0, 18.943083333333334},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 13.0, 18.932923076923075},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 14.0, 18.924285714285713},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 15.0, 18.916733333333333},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 16.0, 18.910125},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 17.0, 18.90429411764706},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 18.0, 18.89911111111111},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 19.0, 18.894473684210528},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 20.0, 18.8903},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 21.0, 18.886523809523812},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 22.0, 18.88309090909091},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 23.0, 18.87995652173913},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 24.0, 18.877083333333335},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 25.0, 18.87444},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 26.0, 18.872},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 27.0, 18.869740740740742},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 28.0, 18.867642857142858},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 29.0, 18.865689655172414},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, 30.0, 18.86386666666667},
+        {{"h_3"}, {"h_3", "h_0MI.IDX_2_3"}, INFINITY, 0.0},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 1.0,  21.2697},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 2.0, 10.63485},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 3.0, 7.0899},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 4.0, 5.317425},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 5.0, 4.25394},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 6.0, 3.54495},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 7.0, 3.0385285714285715},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 8.0, 2.6587125},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 9.0, 2.3633},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 10.0, 2.12697},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 11.0, 1.9336090909090908},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 12.0, 1.772475},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 13.0, 1.6361307692307692},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 14.0, 1.5192642857142857},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 15.0, 1.41798},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 16.0, 1.32935625},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 17.0, 1.2511588235294118},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 18.0, 1.18165},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 19.0, 1.119457894736842},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 20.0, 1.063485},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 21.0, 1.0128428571428572},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 22.0, 0.9668045454545454},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 23.0, 0.9247695652173913},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 24.0, 0.8862375},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 25.0, 0.850788},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 26.0, 0.8180653846153846},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 27.0, 0.7877666666666667},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 28.0, 0.7596321428571429},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 29.0, 0.7334379310344827},
+        {{"h_2"}, {"h_2", "h_0T_2"}, 30.0, 0.70899},
+        {{"h_2"}, {"h_2", "h_0T_2"}, INFINITY, 0.0}
+    };
+
+    vector<string> vars = {
+        "h_0IT_3",
+        "h_1",
+        "h_2",
+        "h_3",
+        "h_0T_2",
+        "h_0MI.IDX_2_3",
+        "h_0CT_1",
+        "h_0MC_1_2"
+    };
+
+    cout << "Testing JobJoin Q1" << endl;
+
+    double objective = flow_bound(dcs, vars, false);
+    double estimate = pow(2, objective);
+    cout << "Flow bound (exponent): " << objective << endl;
+    cout << "Estimate: " << estimate << endl;
 }
 
 
@@ -1405,6 +1818,8 @@ int main() {
     test_flow_bound_projection2();
     test_flow_bound_projection3();
     test_flow_bound_projection4();
+
+    test_flow_bound_job_join_1();
 
     test_approximate_topological_sort1();
     test_approximate_topological_sort2();
