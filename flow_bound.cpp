@@ -226,9 +226,9 @@ pair<double,vector<double>> solve(const LP &p) {
 
     // TODO: The following corner case is special to the LP corresponding to the flow bound
     if (model_status==HighsModelStatus::kInfeasible)
-        return make_pair(INFINITY, vector<double>());
+        return make_pair(INFINITY, vector<double>(n, 0.0));
     if (model_status==HighsModelStatus::kUnbounded)
-        return make_pair(p.objective.maximize ? INFINITY : -INFINITY, vector<double>());
+        return make_pair(p.objective.maximize ? INFINITY : -INFINITY, vector<double>(n, 0.0));
 
     assert(model_status==HighsModelStatus::kOptimal);
 
@@ -237,6 +237,7 @@ pair<double,vector<double>> solve(const LP &p) {
     const bool has_values = info.primal_solution_status;
     assert(has_values);
     const HighsSolution& solution = highs.getSolution();
+    assert(solution.col_value.size() == size_t(n));
 
     // Return a pair of the objective value and the variable values
     return make_pair(obj, solution.col_value);
@@ -898,9 +899,13 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 #endif
 
 /*************************************************/
-// NOTE: This is the main entry point to this file
+// NOTE: This function is the main entry point to this file. It returns a pair
+// `(bound, dc_coefs)` where:
+//   - `bound` is the flow bound
+//   - `dc_coefs` is a vector of the same length as the given `dcs` where `dc_coefs[i]` is
+//      the coefficient of the DC `dcs[i]` in the optimal solution to the LP
 /*************************************************/
-double flow_bound(
+pair<double,vector<double>> flow_bound(
     // The degree constraints
     const vector<DC<string>> &dcs,
     // The target set of variables whose cardinality we want to bound.
@@ -938,7 +943,12 @@ double flow_bound(
     lp.construct_flow_network();
     lp.add_flow_constraints();
     lp.set_objective();
-    return solve(lp.lp).first;
+    auto sol = solve(lp.lp);
+    // Extract the coefficients of the DCs from the solution
+    vector<double> dc_coefs;
+    for (size_t i = 0; i < dcs.size(); ++i)
+        dc_coefs.push_back(sol.second.at(lp.get_dc_var(i)));
+    return {sol.first, dc_coefs};
 }
 
 
@@ -1075,9 +1085,9 @@ void test_flow_bound1() {
     };
     vector<string> vars = { "A", "B", "C" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 1.5) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1092,9 +1102,9 @@ void test_flow_bound2() {
     };
     vector<string> vars = { "A", "B", "C" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 1.5) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1109,9 +1119,9 @@ void test_flow_bound3() {
     };
     vector<string> vars = { "A", "B", "C" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 2.0) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 3.0) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1128,9 +1138,9 @@ void test_flow_bound4() {
     };
     vector<string> vars = { "x", "y", "z", "u", "t" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 1.5) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1147,9 +1157,9 @@ void test_flow_bound5() {
     };
     vector<string> vars = { "x", "y", "z", "u" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 2) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 2) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1167,9 +1177,9 @@ void test_flow_bound6() {
     };
     vector<string> vars = { "x", "y", "z", "u" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 6) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 6) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1196,13 +1206,13 @@ void test_flow_bound7() {
     };
     vector<string> vars = { "x", "y", "z", "u" };
     double p;
-    p = flow_bound(dcs, vars, false, true);
+    p = flow_bound(dcs, vars, false, true).first;
     assert(abs(p - 6) < 1e-7);
-    p = flow_bound(dcs, vars, false, false);
+    p = flow_bound(dcs, vars, false, false).first;
     assert(abs(p - 6) < 1e-7);
-    p = flow_bound(dcs, vars, true, false);
+    p = flow_bound(dcs, vars, true, false).first;
     assert(isinf(p) && p > 0);
-    p = flow_bound(dcs, vars, true, true);
+    p = flow_bound(dcs, vars, true, true).first;
     assert(abs(p - 6) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1220,9 +1230,9 @@ void test_flow_bound8() {
     };
     vector<string> vars = { "x", "y", "z", "u" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 3.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 3.5) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1238,9 +1248,9 @@ void test_flow_bound9() {
     };
     vector<string> vars = { "x", "y", "z", "t" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 2.7 * 3) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 2.7 * (4 + 2.0/3.0)) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1256,9 +1266,9 @@ void test_flow_bound10() {
     };
     vector<string> vars = { "x", "y", "z", "t" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 2.7 * 4) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 2.7 * 5.75) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1274,9 +1284,9 @@ void test_flow_bound_infeasible() {
     };
     vector<string> vars = { "x", "y", "z", "t" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(isinf(p) && p > 0);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(isinf(p) && p > 0);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1353,9 +1363,9 @@ void test_flow_bound_JOB_Q1() {
     vector<string> vars = {"0MC", "0MI_IDX", "0T", "1"};
 
     double p;
-    p = pow(2, flow_bound(dcs, vars, false));
+    p = pow(2, flow_bound(dcs, vars, false).first);
     assert(abs(p-7017) < 1);
-    p = pow(2, flow_bound(dcs, vars, true));
+    p = pow(2, flow_bound(dcs, vars, true).first);
     assert(abs(p-7017) < 1);
 
     p = pow(2, elemental_shannon_bound(dcs, vars));
@@ -1373,9 +1383,9 @@ void test_flow_bound_projection1() {
     };
     vector<string> vars = { "y", "z", "t" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(abs(p - 1.5) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1390,9 +1400,9 @@ void test_flow_bound_projection2() {
     };
     vector<string> vars = { "x", "z" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 12) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(isinf(p) && p > 0);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1409,9 +1419,9 @@ void test_flow_bound_projection3() {
     };
     vector<string> vars = { "x", "y", "t" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(abs(p - 30) < 1e-7);
-    p = flow_bound(dcs, vars, true);
+    p = flow_bound(dcs, vars, true).first;
     assert(isinf(p) && p > 0);
 
     p = elemental_shannon_bound(dcs, vars);
@@ -1425,14 +1435,14 @@ void test_flow_bound_projection4() {
     };
     vector<string> vars = { "x", "w" };
     double p;
-    p = flow_bound(dcs, vars, false);
+    p = flow_bound(dcs, vars, false).first;
     assert(isinf(p) && p > 0);
 
     p = elemental_shannon_bound(dcs, vars);
     assert(isinf(p) && p > 0);
 
     vector<string> vars2 = {"x", "y", "t"};
-    p = flow_bound(dcs, vars2, false);
+    p = flow_bound(dcs, vars2, false).first;
     assert(abs(p - 11) < 1e-7);
 
     p = elemental_shannon_bound(dcs, vars2);
@@ -1662,7 +1672,7 @@ void test_flow_bound_job_join_1(){
 
     vector<string> vars = {"0CT", "0IT", "0MC", "0MI.IDX", "0T", "1", "2", "3" };
 
-    double p1 = flow_bound(dcs, vars);
+    double p1 = flow_bound(dcs, vars).first;
     assert(abs(p1 - 22.8804) < 1e-4);
 
     double p2 = elemental_shannon_bound(dcs, vars);
