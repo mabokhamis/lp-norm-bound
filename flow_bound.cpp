@@ -1163,21 +1163,23 @@ void test_flow_bound3() {
 
 void test_flow_bound4() {
     vector<DC<string>> dcs = {
-        { {}, {"x", "y"}, 1, 1 },
-        { {}, {"y", "z"}, 1, 1 },
-        { {}, {"x", "z"}, 1, 1 },
+        { {}, {"x", "y"}, 1, 10 },
+        { {}, {"y", "z"}, 1, 10 },
+        { {}, {"x", "z"}, 1, 10 },
         { {"x", "z"}, {"u"}, INFINITY, 0},
         { {"y", "z"}, {"t"}, INFINITY, 0}
     };
     vector<string> vars = { "x", "y", "z", "u", "t" };
-    double p;
-    p = flow_bound(dcs, vars, false).first;
-    assert(abs(p - 1.5) < 1e-7);
-    p = flow_bound(dcs, vars, true).first;
-    assert(abs(p - 1.5) < 1e-7);
+    pair<double,vector<double>> sol;
+    sol = flow_bound(dcs, vars, false);
+    assert(abs(sol.first - 15) < 1e-7);
+    assert(are_approx_equal(sol.second, vector<double>({0.5, 0.5, 0.5, 1.0, 1.0})));
+    sol = flow_bound(dcs, vars, true);
+    assert(abs(sol.first - 15) < 1e-7);
+    assert(are_approx_equal(sol.second, vector<double>({0.5, 0.5, 0.5, 1.0, 1.0})));
 
-    p = elemental_shannon_bound(dcs, vars);
-    assert(abs(p - 1.5) < 1e-7);
+    double p = elemental_shannon_bound(dcs, vars);
+    assert(abs(p - 15) < 1e-7);
 }
 
 void test_flow_bound5() {
