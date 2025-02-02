@@ -899,11 +899,25 @@ pair<vector<DC<int>>, vector<int>> transform_dcs_to_int(
 #endif
 
 /*************************************************/
-// NOTE: This function is the main entry point to this file. It returns a pair
-// `(bound, dc_coefs)` where:
+// NOTE: This function is the main entry point to this file. It returns a pair `(bound,
+// dc_coefs)` where:
 //   - `bound` is the flow bound
 //   - `dc_coefs` is a vector of the same length as the given `dcs` where `dc_coefs[i]` is
 //      the exponent of the Lp-norm corresponding to the `i`-th DC in the flow bound
+//
+// Example:
+// --------
+// Suppose we have the triangle query: `Q(X, Y, Z) = R(X, Y), S(Y, Z), T(Z, X)` where the
+// L2-norms of the degree sequences `deg_R(Y|X), deg_S(Z|Y), deg_T(X|Z)` are upper bounded
+// by a constant C. Then, we have:
+//  - `dcs = {DC({"X"}, {"Y"}, 2, log C), DC({"Y"}, {"Z"}, 2, log C), DC({"Z"}, {"X"}, 2, log C)}`
+//  - `target_vars = {"X", "Y", "Z"}`
+// In this example, `flow_bound(dcs, target_vars)` returns a pair `(bound, dc_coefs)` where:
+//  - `bound = 2 log C`
+//  - `dc_coefs = {2/3, 2/3, 2/3}`
+// The above `bound` and `dc_coefs` correspond to the inequality:
+//   |Q| <= [ ||deg_R(Y|X)||_2 * ||deg_S(Z|Y)||_2 * ||deg_T(X|Z)||_2 ]^(2/3)
+//       <= C^2
 /*************************************************/
 pair<double,vector<double>> flow_bound(
     // The degree constraints
