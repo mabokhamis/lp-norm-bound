@@ -293,6 +293,14 @@ set<T> set_union(const set<T>& X, const set<T>& Y) {
     return Z;
 }
 
+template <typename T>
+set<T> set_union(const set<T>& X, const T y) {
+    set<T> Z;
+    copy(X.begin(), X.end(), inserter(Z, Z.end()));
+    Z.insert(y);
+    return Z;
+}
+
 // Intersection of two sets
 template <typename T>
 set<T> set_intersection(const set<T>& X, const set<T>& Y) {
@@ -320,6 +328,50 @@ bool is_subset(const set<T>& X, const set<T>& Y) {
 //==========================================================================================
 // The core implementation of the flow bound with Lp-norm constraints
 //==========================================================================================
+
+template <typename T>
+struct CorrDegree {
+    const T x;
+    const set<T> Y;
+    const double p;
+
+    CorrDegree(const T x_, const set<T>& Y_, double p_)
+    : x(x_), Y(set_union(Y_, x_)), p(p_) {
+        assert(p > 0.0);
+    }
+};
+
+template <typename T>
+double max_p(const vector<CorrDegree<T>>& degrees) {
+    double p = 0.0;
+    for (auto deg : degrees)
+        p = max(p, deg.p);
+    return p;
+}
+
+template <typename T>
+struct CorrBound {
+    const vector<CorrDegree<T>> degrees;
+    const set<T> X;
+    const double b;
+    const double p;
+
+    CorrBound(const vector<CorrDegree<T>>& degrees_, const set<T>& X_, double b_)
+    : degrees(degrees_), X(X_), b(b_), p(max_p(degrees_)) {
+        for (auto deg : degrees)
+            assert(X.find(deg.x) != X.end());
+        assert(b >= 0.0);
+    }
+};
+
+template <typename T>
+CorrBound<T> degree_constraint(const set<T> &X, const set<T>& Y, double p, double b) {
+    assert(length(X) <= 1);
+    if (p == 1 || X.empty())
+        return CorrBound<T>({}, set_union(Y, X), b);
+    const T x = *X.begin();
+    return CorrBound<T>({x, Y, p}, X, b);
+}
 
 // A representation of a constraint on an Lp-norm of a degree sequence. The constraint is:
 // log_2 ||deg(Y|X)||_p <= b
