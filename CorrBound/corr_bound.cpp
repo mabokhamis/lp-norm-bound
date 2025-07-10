@@ -329,6 +329,27 @@ bool is_subset(const set<T>& X, const set<T>& Y) {
 // The core implementation of the flow bound with Lp-norm constraints
 //==========================================================================================
 
+// A representation of a constraint on an Lp-norm of a degree sequence. The constraint is:
+// log_2 ||deg(Y|X)||_p <= b
+template <typename T>
+struct DC {
+    // Specify the degree sequence deg(Y|X) using the sets X and Y
+    const set<T> X;
+    const set<T> Y;
+    // Specify the Lp-norm to be used
+    const double p;
+    // Specify the upper bound on the Lp-norm of the degree sequence *ON LOG SCALE*
+    // log_2 ||deg(Y|X)||_p <= b
+    const double b;
+
+    DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
+    // Note that this constructor always sets Y to be `X_ union Y_`
+    : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {
+        assert(p > 0.0);
+        assert(b >= 0.0);
+    }
+};
+
 template <typename T>
 struct CorrDegree {
     const T x;
@@ -365,34 +386,42 @@ struct CorrInequality {
 };
 
 template <typename T>
-CorrInequality<T> degree_constraint(const set<T> &X, const set<T>& Y, double p, double b) {
-    assert(X.size() <= 1);
-    if (p == 1 || X.empty())
-        return CorrInequality<T>({}, set_union(Y, X), b);
-    const T x = *X.begin();
-    return CorrInequality<T>({{x, Y, p}}, X, b);
+CorrInequality<T> convert_dc_to_corr(const DC<T>& dc) {
+    assert(dc.X.size() <= 1);
+    if (dc.p == 1 || dc.X.empty())
+        return CorrInequality<T>({}, set_union(dc.Y, dc.X), dc.b);
+    return CorrInequality<T>({{*dc.X.begin(), dc.Y, dc.p}}, dc.X, dc.b);
 }
 
-// A representation of a constraint on an Lp-norm of a degree sequence. The constraint is:
-// log_2 ||deg(Y|X)||_p <= b
 template <typename T>
-struct DC {
-    // Specify the degree sequence deg(Y|X) using the sets X and Y
-    const set<T> X;
-    const set<T> Y;
-    // Specify the Lp-norm to be used
-    const double p;
-    // Specify the upper bound on the Lp-norm of the degree sequence *ON LOG SCALE*
-    // log_2 ||deg(Y|X)||_p <= b
-    const double b;
+CorrInequality<T> inter_relation(
+    const T x,
+    const vector<set<T>>& Y,
+    const vector<double>& p,
+    double b
+) {
+    vector<CorrDegree<T>> degrees;
+    assert(Y.size() == p.size());
+    for (size_t i = 0; i < Y.size(); ++i)
+        degrees.push_back(CorrDegree<T>(x, Y[i], p[i]));
+    return CorrInequality<T>(degrees, {x}, b);
+}
 
-    DC(const set<T>& X_, const set<T>& Y_, double p_, double b_)
-    // Note that this constructor always sets Y to be `X_ union Y_`
-    : X(X_), Y(set_union(X_, Y_)), p(p_), b(b_) {
-        assert(p > 0.0);
-        assert(b >= 0.0);
+template <typename T>
+CorrInequality<T> intra_relation(
+    const set<T>& Y,
+    const vector<T>& x,
+    const vector<double>& p,
+    double b
+) {
+    vector<CorrDegree<T>> degrees;
+    assert(x.size() == p.size());
+    for (size_t i = 0; i < x.size(); ++i) {
+        assert(Y.find(x[i]) != Y.end());
+        degrees.push_back(CorrDegree<T>(x[i], Y, p[i]));
     }
-};
+    return CorrInequality<T>(degrees, Y, b);
+}
 
 // In Debug mode, we generate meaningful names for variables and constraints.
 #ifdef DEBUG_FLOW_BOUND
@@ -803,7 +832,7 @@ pair<double,vector<double>> flow_bound(
 ) {
     vector<CorrInequality<T>> corrs;
     for (const auto& dc : dcs)
-        corrs.push_back(degree_constraint(dc.X, dc.Y, dc.p, dc.b));
+        corrs.push_back(convert_dc_to_corr(dc));
     return flow_bound(corrs, target_vars);
 }
 
@@ -1239,6 +1268,31 @@ void test_flow_bound_job_join_1(){
     assert(abs(p1 - 22.8804) < 1e-4);
 }
 
+void test_inter_relation1() {
+    vector<CorrInequality<string>> corrs = {
+        inter_relation<string>("X", {{"Y"}, {"Z"}}, {1.0, 1.0}, 2.0),
+        inter_relation<string>("Y", {{"Z"}, {"X"}}, {1.0, 1.0}, 2.0),
+        inter_relation<string>("Z", {{"X"}, {"Y"}}, {1.0, 1.0}, 2.0)
+    };
+    vector<string> vars = {"X", "Y", "Z"};
+
+    auto sol = flow_bound(corrs, vars);
+    assert(abs(sol.first - 2.0) < 1e-7);
+}
+
+void test_intra_relation1() {
+    vector<CorrInequality<string>> corrs = {
+        intra_relation<string>({"X", "Y"}, {"X", "Y"}, {1.0, 1.0}, 2.0),
+        intra_relation<string>({"Y", "Z"}, {"Y", "Z"}, {1.0, 1.0}, 2.0),
+        intra_relation<string>({"Z", "W"}, {"Z", "W"}, {1.0, 1.0}, 2.0),
+        intra_relation<string>({"W", "X"}, {"W", "X"}, {1.0, 1.0}, 2.0),
+    };
+    vector<string> vars = {"X", "Y", "Z", "W"};
+
+    auto sol = flow_bound(corrs, vars);
+    assert(abs(sol.first - 2.0) < 1e-7);
+}
+
 
 
 //==========================================================================================
@@ -1261,6 +1315,10 @@ int main() {
     test_flow_bound_projection2();
 
     test_flow_bound_job_join_1();
+
+    test_inter_relation1();
+
+    test_intra_relation1();
 
     return 0;
 }
