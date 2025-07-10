@@ -447,12 +447,13 @@ CorrInequality<T> inter_relation(
 //  - ...
 //  - deg(Y | X_k)^p_k
 //
-// The inequality has the following form, where `P` is the maximum of all `p_i`:
+// Let Z be any subset of Y that contains all the X_i. By default, we take Z to be Y. The
+// inequality has the following form, where `P` is the maximum of all `p_i`:
 // ```
-// log_2 [\sum_{y ∈ Dom^Y} deg(Y | X_1 = π_{X_1}(y))^p_1 ×
-//                         deg(Y | X_2 = π_{X_2}(y))^p_2 ×
+// log_2 [\sum_{z ∈ Dom^Z} deg(Y | X_1 = π_{X_1}(z))^p_1 ×
+//                         deg(Y | X_2 = π_{X_2}(z))^p_2 ×
 //                         ... ×
-//                         deg(Y | X_k = π_{X_k}(y))^p_k
+//                         deg(Y | X_k = π_{X_k}(z))^p_k
 //       ] ^ (1/P)                                                <= b
 // ```
 template <typename T>
@@ -460,15 +461,26 @@ CorrInequality<T> intra_relation(
     const set<T>& Y,
     const vector<T>& x,
     const vector<double>& p,
-    double b
+    double b,
+    const set<T>& Z
 ) {
     vector<CorrDegree<T>> degrees;
+    assert(is_subset(Z, Y));
     assert(x.size() == p.size());
     for (size_t i = 0; i < x.size(); ++i) {
-        assert(Y.find(x[i]) != Y.end());
+        assert(Z.find(x[i]) != Z.end());
         degrees.push_back(CorrDegree<T>(x[i], Y, p[i]));
     }
-    return CorrInequality<T>(degrees, Y, b);
+    return CorrInequality<T>(degrees, Z, b);
+}
+template <typename T>
+CorrInequality<T> intra_relation(
+    const set<T>& Y,
+    const vector<T>& x,
+    const vector<double>& p,
+    double b
+) {
+    return intra_relation(Y, x, p, b, Y);
 }
 
 // In Debug mode, we generate meaningful names for variables and constraints.
