@@ -473,6 +473,7 @@ CorrInequality<T> intra_relation(
     }
     return CorrInequality<T>(degrees, Z, b);
 }
+// An overload that uses `Y` as a default value for `Z` above
 template <typename T>
 CorrInequality<T> intra_relation(
     const set<T>& Y,
