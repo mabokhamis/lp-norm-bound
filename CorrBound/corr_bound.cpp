@@ -1280,6 +1280,33 @@ void test_inter_relation1() {
     assert(abs(sol.first - 2.0) < 1e-7);
 }
 
+void test_inter_relation2() {
+    vector<CorrInequality<string>> corrs = {
+        inter_relation<string>("A", {{"F"}, {"B"}}, {2.0, 2.0}, 1.0),
+        inter_relation<string>("B", {{"A"}, {"C"}}, {2.0, 2.0}, 1.0),
+        inter_relation<string>("C", {{"B"}, {"D"}}, {2.0, 2.0}, 1.0),
+        inter_relation<string>("D", {{"C"}, {"E"}}, {2.0, 2.0}, 1.0),
+        inter_relation<string>("E", {{"D"}, {"F"}}, {2.0, 2.0}, 1.0),
+        inter_relation<string>("F", {{"E"}, {"A"}}, {2.0, 2.0}, 1.0)
+    };
+    vector<string> vars = {"A", "B", "C", "D", "E", "F"};
+
+    auto sol = flow_bound(corrs, vars);
+    assert(abs(sol.first - 6/2.5) < 1e-7);
+}
+
+void test_inter_relation3() {
+    vector<CorrInequality<string>> corrs = {
+        inter_relation<string>("X", {{"Y"}, {"Z"}}, {2.0, 2.0}, 2.0),
+        inter_relation<string>("Y", {{"Z"}, {"X"}}, {2.0, 2.0}, 2.0),
+        inter_relation<string>("Z", {{"X"}, {"Y"}}, {2.0, 2.0}, 2.0)
+    };
+    vector<string> vars = {"X", "Y", "Z"};
+
+    auto sol = flow_bound(corrs, vars);
+    assert(abs(sol.first - 4.0) < 1e-7);
+}
+
 void test_intra_relation1() {
     vector<CorrInequality<string>> corrs = {
         intra_relation<string>({"X", "Y"}, {"X", "Y"}, {1.0, 1.0}, 2.0),
@@ -1317,6 +1344,8 @@ int main() {
     test_flow_bound_job_join_1();
 
     test_inter_relation1();
+    test_inter_relation2();
+    test_inter_relation3();
 
     test_intra_relation1();
 
