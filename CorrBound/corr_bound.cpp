@@ -326,7 +326,7 @@ bool is_subset(const set<T>& X, const set<T>& Y) {
 
 
 //==========================================================================================
-// The core implementation of the flow bound with Lp-norm constraints
+// The core implementation of the flow bound with general correlation inequalities
 //==========================================================================================
 
 // A representation of a constraint on an Lp-norm of a degree sequence. The constraint is:
@@ -350,6 +350,7 @@ struct DC {
     }
 };
 
+// A representation of a degree sequence raised to a power of p, i.e. `deg(Y|X)^p`
 template <typename T>
 struct CorrDegree {
     const T x;
@@ -370,6 +371,22 @@ double max_p(const vector<CorrDegree<T>>& degrees) {
     return p;
 }
 
+// A representation of a general correlation inequality among a set of simple degree
+// sequences, each of which is raised to some power:
+//  - deg(Y_1 | X_1)^p_1
+//  - deg(Y_2 | X_2)^p_2
+//  - ...
+//  - deg(Y_k | X_k)^p_k
+//
+// Let `X` be a set that contains {X_1, X_2, ..., X_k}. Moreover, let P := max(p_1, p_2,
+// ..., p_k). Then the inequality has the form:
+// ```
+// log_2 [\sum_{x ∈ Dom^X} deg(Y_1 | X_1 = π_{X_1}(x))^p_1 ×
+//                         deg(Y_2 | X_2 = π_{X_2}(x))^p_2 ×
+//                         ... ×
+//                         deg(Y_k | X_k = π_{X_k}(x))^p_k
+//       ] ^ (1/P)                                                <= b
+// ```
 template <typename T>
 struct CorrInequality {
     const vector<CorrDegree<T>> degrees;
@@ -385,6 +402,7 @@ struct CorrInequality {
     }
 };
 
+// Convert a bound on an LP-norm of a degree sequence into a correlation inequality.
 template <typename T>
 CorrInequality<T> convert_dc_to_corr(const DC<T>& dc) {
     assert(dc.X.size() <= 1);
@@ -393,6 +411,21 @@ CorrInequality<T> convert_dc_to_corr(const DC<T>& dc) {
     return CorrInequality<T>({{*dc.X.begin(), dc.Y, dc.p}}, dc.X, dc.b);
 }
 
+// Create a correlation inequality that represents an *inter-relation* correlation. In
+// particular, here we have a set of simple degree sequences, all of which share the same
+// `X` variable.
+//  - deg(Y_1 | X)^p_1
+//  - ...
+//  - deg(Y_k | X)^p_k
+//
+// The inequality has the following form, where `P` is the maximum of all `p_i`:
+// ```
+// log_2 [\sum_{x ∈ Dom^X} deg(Y_1 | X = x)^p_1 ×
+//                         deg(Y_2 | X = x)^p_2 ×
+//                         ... ×
+//                         deg(Y_k | X = x)^p_k
+//       ] ^ (1/P)                                                <= b
+// ```
 template <typename T>
 CorrInequality<T> inter_relation(
     const T x,
@@ -407,6 +440,21 @@ CorrInequality<T> inter_relation(
     return CorrInequality<T>(degrees, {x}, b);
 }
 
+// Create a correlation inequality that represents an *intra-relation* correlation. In
+// particular, here we have a set of simple degree sequences, all of which share the same
+// relation with variable set `Y`:
+//  - deg(Y | X_1)^p_1
+//  - ...
+//  - deg(Y | X_k)^p_k
+//
+// The inequality has the following form, where `P` is the maximum of all `p_i`:
+// ```
+// log_2 [\sum_{y ∈ Dom^Y} deg(Y | X_1 = π_{X_1}(y))^p_1 ×
+//                         deg(Y | X_2 = π_{X_2}(y))^p_2 ×
+//                         ... ×
+//                         deg(Y | X_k = π_{X_k}(y))^p_k
+//       ] ^ (1/P)                                                <= b
+// ```
 template <typename T>
 CorrInequality<T> intra_relation(
     const set<T>& Y,
@@ -776,27 +824,13 @@ pair<vector<CorrInequality<int>>, vector<int>> transform_corrs_to_int(
 
 /*************************************************/
 // NOTE: This function is the main entry point to this file. It returns a pair `(bound,
-// dc_coefs)` where:
+// corr_coefs)` where:
 //   - `bound` is the flow bound
-//   - `dc_coefs` is a vector of the same length as the given `dcs` where `dc_coefs[i]` is
-//      the exponent of the Lp-norm corresponding to the `i`-th DC in the flow bound
-//
-// Example:
-// --------
-// Suppose we have the triangle query: `Q(X, Y, Z) = R(X, Y), S(Y, Z), T(Z, X)` where the
-// L2-norms of the degree sequences `deg_R(Y|X), deg_S(Z|Y), deg_T(X|Z)` are upper bounded
-// by a constant C. Then, we have:
-//  - `dcs = {DC({"X"}, {"Y"}, 2, log C), DC({"Y"}, {"Z"}, 2, log C), DC({"Z"}, {"X"}, 2, log C)}`
-//  - `target_vars = {"X", "Y", "Z"}`
-// In this example, `flow_bound(dcs, target_vars)` returns a pair `(bound, dc_coefs)` where:
-//  - `bound = 2 log C`
-//  - `dc_coefs = {2/3, 2/3, 2/3}`
-// The above `bound` and `dc_coefs` correspond to the inequality:
-//   |Q| <= [ ||deg_R(Y|X)||_2 * ||deg_S(Z|Y)||_2 * ||deg_T(X|Z)||_2 ]^(2/3)
-//       <= C^2
+//   - `corr_coefs` is a vector of the same length as the given correlation vector `corrs`
+//      where `corr_coefs[i]` is the coefficient of the `i`-th correlation inequality
 /*************************************************/
 pair<double,vector<double>> flow_bound(
-    // The degree constraints
+    // The correlation inequalities
     const vector<CorrInequality<string>> &corrs,
     // The target set of variables whose cardinality we want to bound.
     // `target_vars` could be a proper subset of the variables in the degree constraints.
@@ -814,14 +848,31 @@ pair<double,vector<double>> flow_bound(
     lp.add_flow_constraints();
     lp.set_objective();
     auto sol = solve(lp.lp);
-    // Extract the coefficients of the DCs from the solution
+    // Extract the coefficients of the correlation inequalities from the solution
     vector<double> corr_coefs;
     for (size_t i = 0; i < corrs.size(); ++i)
         corr_coefs.push_back(sol.second.at(lp.get_corr_var(i)));
     return {sol.first, corr_coefs};
 }
 
+/*************************************************/
+// Legacy version of the flow_bound that accepts degree constraints instead of the more
+// general correlation inequalities.
 
+// Example:
+// --------
+// Suppose we have the triangle query: `Q(X, Y, Z) = R(X, Y), S(Y, Z), T(Z, X)` where the
+// L2-norms of the degree sequences `deg_R(Y|X), deg_S(Z|Y), deg_T(X|Z)` are upper bounded
+// by a constant C. Then, we have:
+//  - `dcs = {DC({"X"}, {"Y"}, 2, log C), DC({"Y"}, {"Z"}, 2, log C), DC({"Z"}, {"X"}, 2,
+//    log C)}`
+//  - `target_vars = {"X", "Y", "Z"}` In this example, `flow_bound(dcs, target_vars)`
+//    returns a pair `(bound, dc_coefs)` where:
+//  - `bound = 2 log C`
+//  - `dc_coefs = {2/3, 2/3, 2/3}` The above `bound` and `dc_coefs` correspond to the
+//    inequality: |Q| <= [ ||deg_R(Y|X)||_2 * ||deg_S(Z|Y)||_2 * ||deg_T(X|Z)||_2 ]^(2/3) <=
+//    C^2
+/*************************************************/
 template <typename T>
 pair<double,vector<double>> flow_bound(
     // The degree constraints
