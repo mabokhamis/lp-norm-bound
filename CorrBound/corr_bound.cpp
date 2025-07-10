@@ -337,7 +337,7 @@ struct CorrDegree {
 
     CorrDegree(const T x_, const set<T>& Y_, double p_)
     : x(x_), Y(set_union(Y_, x_)), p(p_) {
-        assert(p > 0.0);
+        assert(p >= 1.0);
     }
 };
 
@@ -672,7 +672,7 @@ struct LpNormLP {
             for (size_t i = 0; i < corrs.size(); ++i) {
                 int ai = get_corr_var(i);
                 const auto &corr = corrs[i];
-                for (auto deg : corr.degrees)
+                for (auto &deg : corr.degrees)
                     if (deg.Y.size() > 1 && (!isinf(corr.p) || isinf(deg.p))) {
                         double p = isinf(deg.p) ? 1.0 : deg.p / corr.p;
                         lp.add_to_constraint(
