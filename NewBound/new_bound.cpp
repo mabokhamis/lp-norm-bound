@@ -350,21 +350,21 @@ struct DC {
     }
 };
 
-// A representation of a degree sequence raised to a power of p, i.e. `deg(Y|X)^p`
+// A representation of a degree vector raised to a power of p, i.e. `deg(Y|X)^p`
 template <typename T>
-struct CorrDegree {
+struct DegreeVector {
     const T x;
     const set<T> Y;
     const double p;
 
-    CorrDegree(const T x_, const set<T>& Y_, double p_)
+    DegreeVector(const T x_, const set<T>& Y_, double p_)
     : x(x_), Y(set_union(Y_, x_)), p(p_) {
         assert(p >= 1.0);
     }
 };
 
 template <typename T>
-double max_p(const vector<CorrDegree<T>>& degrees) {
+double max_p(const vector<DegreeVector<T>>& degrees) {
     double p = 1.0;
     for (auto deg : degrees)
         p = max(p, deg.p);
@@ -388,13 +388,13 @@ double max_p(const vector<CorrDegree<T>>& degrees) {
 //       ] ^ (1/P)                                                <= b
 // ```
 template <typename T>
-struct CorrInequality {
-    const vector<CorrDegree<T>> degrees;
+struct CorrelationInequality {
+    const vector<DegreeVector<T>> degrees;
     const set<T> X;
     const double b;
     const double p;
 
-    CorrInequality(const vector<CorrDegree<T>>& degrees_, const set<T>& X_, double b_)
+    CorrelationInequality(const vector<DegreeVector<T>>& degrees_, const set<T>& X_, double b_)
     : degrees(degrees_), X(X_), b(b_), p(max_p(degrees_)) {
         for (auto deg : degrees)
             assert(X.find(deg.x) != X.end());
@@ -404,11 +404,11 @@ struct CorrInequality {
 
 // Convert a bound on an LP-norm of a degree sequence into a correlation inequality.
 template <typename T>
-CorrInequality<T> convert_dc_to_corr(const DC<T>& dc) {
+CorrelationInequality<T> convert_dc_to_corr(const DC<T>& dc) {
     assert(dc.X.size() <= 1);
     if (dc.p == 1 || dc.X.empty())
-        return CorrInequality<T>({}, set_union(dc.Y, dc.X), dc.b);
-    return CorrInequality<T>({{*dc.X.begin(), dc.Y, dc.p}}, dc.X, dc.b);
+        return CorrelationInequality<T>({}, set_union(dc.Y, dc.X), dc.b);
+    return CorrelationInequality<T>({{*dc.X.begin(), dc.Y, dc.p}}, dc.X, dc.b);
 }
 
 // Create a correlation inequality that represents an *inter-relation* correlation. In
@@ -427,17 +427,17 @@ CorrInequality<T> convert_dc_to_corr(const DC<T>& dc) {
 //       ] ^ (1/P)                                                <= b
 // ```
 template <typename T>
-CorrInequality<T> inter_relation(
+CorrelationInequality<T> inter_relation(
     const T x,
     const vector<set<T>>& Y,
     const vector<double>& p,
     double b
 ) {
-    vector<CorrDegree<T>> degrees;
+    vector<DegreeVector<T>> degrees;
     assert(Y.size() == p.size());
     for (size_t i = 0; i < Y.size(); ++i)
-        degrees.push_back(CorrDegree<T>(x, Y[i], p[i]));
-    return CorrInequality<T>(degrees, {x}, b);
+        degrees.push_back(DegreeVector<T>(x, Y[i], p[i]));
+    return CorrelationInequality<T>(degrees, {x}, b);
 }
 
 // Create a correlation inequality that represents an *intra-relation* correlation. In
@@ -457,25 +457,25 @@ CorrInequality<T> inter_relation(
 //       ] ^ (1/P)                                                <= b
 // ```
 template <typename T>
-CorrInequality<T> intra_relation(
+CorrelationInequality<T> intra_relation(
     const set<T>& Y,
     const vector<T>& x,
     const vector<double>& p,
     double b,
     const set<T>& Z
 ) {
-    vector<CorrDegree<T>> degrees;
+    vector<DegreeVector<T>> degrees;
     assert(is_subset(Z, Y));
     assert(x.size() == p.size());
     for (size_t i = 0; i < x.size(); ++i) {
         assert(Z.find(x[i]) != Z.end());
-        degrees.push_back(CorrDegree<T>(x[i], Y, p[i]));
+        degrees.push_back(DegreeVector<T>(x[i], Y, p[i]));
     }
-    return CorrInequality<T>(degrees, Z, b);
+    return CorrelationInequality<T>(degrees, Z, b);
 }
 // An overload that uses `Y` as a default value for `Z` above
 template <typename T>
-CorrInequality<T> intra_relation(
+CorrelationInequality<T> intra_relation(
     const set<T>& Y,
     const vector<T>& x,
     const vector<double>& p,
@@ -570,7 +570,7 @@ inline string corr_var_name(int i) {
 template <typename T>
 struct LpNormLP {
     // The input DCs and target variables
-    const vector<CorrInequality<T>> corrs;
+    const vector<CorrelationInequality<T>> corrs;
     const vector<T> target_vars;
     set<T> target_var_set;
 
@@ -602,7 +602,7 @@ struct LpNormLP {
     set<pair<set<T>, set<T>>> edges;
 
     LpNormLP(
-        const vector<CorrInequality<T>>& corrs_,
+        const vector<CorrelationInequality<T>>& corrs_,
         const vector<T>& target_vars_
     ) : corrs(corrs_), target_vars(target_vars_), lp(false) {
 
@@ -789,27 +789,27 @@ struct LpNormLP {
 #ifndef DEBUG_FLOW_BOUND
 // Convert the type of the given DC vars from T1 to T2, and return the resulting DC
 template <typename T1, typename T2>
-CorrDegree<T2> transform_corr_degree(const CorrDegree<T1>& deg, const map<T1, T2>& f) {
+DegreeVector<T2> transform_corr_degree(const DegreeVector<T1>& deg, const map<T1, T2>& f) {
     set<T2> new_Y;
     for (const auto& y : deg.Y)
         new_Y.insert(f.at(y));
-    return CorrDegree<T2>(f.at(deg.x), new_Y, deg.p);
+    return DegreeVector<T2>(f.at(deg.x), new_Y, deg.p);
 }
 
 template <typename T1, typename T2>
-CorrInequality<T2> transform_corr(const CorrInequality<T1>& corr, const map<T1, T2>& f) {
-    vector<CorrDegree<T2>> new_degrees;
+CorrelationInequality<T2> transform_corr(const CorrelationInequality<T1>& corr, const map<T1, T2>& f) {
+    vector<DegreeVector<T2>> new_degrees;
     for (const auto& deg : corr.degrees)
         new_degrees.push_back(transform_corr_degree(deg, f));
     set<T2> new_X;
     for (const auto& x : corr.X)
         new_X.insert(f.at(x));
-    return CorrInequality<T2>(new_degrees, new_X, corr.b);
+    return CorrelationInequality<T2>(new_degrees, new_X, corr.b);
 }
 
 // Convert DCs from string to integer representation
-pair<vector<CorrInequality<int>>, vector<int>> transform_corrs_to_int(
-    const vector<CorrInequality<string>>& corrs, const vector<string>& target_vars
+pair<vector<CorrelationInequality<int>>, vector<int>> transform_corrs_to_int(
+    const vector<CorrelationInequality<string>>& corrs, const vector<string>& target_vars
 ) {
     set<string> var_set;
     copy(target_vars.begin(), target_vars.end(), inserter(var_set, var_set.end()));
@@ -823,7 +823,7 @@ pair<vector<CorrInequality<int>>, vector<int>> transform_corrs_to_int(
     for (size_t i = 0; i < vars.size(); ++i)
         var_map[vars[i]] = i;
 
-    vector<CorrInequality<int>> new_corrs;
+    vector<CorrelationInequality<int>> new_corrs;
     for (const auto& corr : corrs)
         new_corrs.push_back(transform_corr(corr, var_map));
 
@@ -844,7 +844,7 @@ pair<vector<CorrInequality<int>>, vector<int>> transform_corrs_to_int(
 /*************************************************/
 pair<double,vector<double>> flow_bound(
     // The correlation inequalities
-    const vector<CorrInequality<string>> &corrs,
+    const vector<CorrelationInequality<string>> &corrs,
     // The target set of variables whose cardinality we want to bound.
     // `target_vars` could be a proper subset of the variables in the degree constraints.
     const vector<string> &target_vars
@@ -894,7 +894,7 @@ pair<double,vector<double>> flow_bound(
     // `target_vars` could be a proper subset of the variables in the degree constraints.
     const vector<T> &target_vars
 ) {
-    vector<CorrInequality<T>> corrs;
+    vector<CorrelationInequality<T>> corrs;
     for (const auto& dc : dcs)
         corrs.push_back(convert_dc_to_corr(dc));
     return flow_bound(corrs, target_vars);
@@ -1333,7 +1333,7 @@ void test_flow_bound_job_join_1(){
 }
 
 void test_inter_relation1() {
-    vector<CorrInequality<string>> corrs = {
+    vector<CorrelationInequality<string>> corrs = {
         inter_relation<string>("X", {{"Y"}, {"Z"}}, {1.0, 1.0}, 2.0),
         inter_relation<string>("Y", {{"Z"}, {"X"}}, {1.0, 1.0}, 2.0),
         inter_relation<string>("Z", {{"X"}, {"Y"}}, {1.0, 1.0}, 2.0)
@@ -1345,7 +1345,7 @@ void test_inter_relation1() {
 }
 
 void test_inter_relation2() {
-    vector<CorrInequality<string>> corrs = {
+    vector<CorrelationInequality<string>> corrs = {
         inter_relation<string>("A", {{"F"}, {"B"}}, {2.0, 2.0}, 1.0),
         inter_relation<string>("B", {{"A"}, {"C"}}, {2.0, 2.0}, 1.0),
         inter_relation<string>("C", {{"B"}, {"D"}}, {2.0, 2.0}, 1.0),
@@ -1360,7 +1360,7 @@ void test_inter_relation2() {
 }
 
 void test_inter_relation3() {
-    vector<CorrInequality<string>> corrs = {
+    vector<CorrelationInequality<string>> corrs = {
         inter_relation<string>("X", {{"Y"}, {"Z"}}, {2.0, 2.0}, 2.0),
         inter_relation<string>("Y", {{"Z"}, {"X"}}, {2.0, 2.0}, 2.0),
         inter_relation<string>("Z", {{"X"}, {"Y"}}, {2.0, 2.0}, 2.0)
@@ -1372,7 +1372,7 @@ void test_inter_relation3() {
 }
 
 void test_intra_relation1() {
-    vector<CorrInequality<string>> corrs = {
+    vector<CorrelationInequality<string>> corrs = {
         intra_relation<string>({"X", "Y"}, {"X", "Y"}, {1.0, 1.0}, 2.0),
         intra_relation<string>({"Y", "Z"}, {"Y", "Z"}, {1.0, 1.0}, 2.0),
         intra_relation<string>({"Z", "W"}, {"Z", "W"}, {1.0, 1.0}, 2.0),
@@ -1385,7 +1385,7 @@ void test_intra_relation1() {
 }
 
 void test_intra_relation2() {
-    vector<CorrInequality<string>> corrs = {
+    vector<CorrelationInequality<string>> corrs = {
         intra_relation<string>({"A", "B"}, {"A", "B"}, {2.0, 2.0}, 1.0),
         intra_relation<string>({"B", "C"}, {"B", "C"}, {2.0, 2.0}, 1.0),
         intra_relation<string>({"C", "D"}, {"C", "D"}, {2.0, 2.0}, 1.0),
@@ -1401,7 +1401,7 @@ void test_intra_relation2() {
 }
 
 void test_intra_relation3() {
-    vector<CorrInequality<string>> corrs = {
+    vector<CorrelationInequality<string>> corrs = {
         intra_relation<string>({"X", "Y"}, {"X", "Y"}, {1.0, 1.0}, 2.0),
         intra_relation<string>({"Y", "Z"}, {"Y", "Z"}, {1.0, 1.0}, 2.0),
         intra_relation<string>({"Z", "X"}, {"Z", "X"}, {1.0, 1.0}, 2.0),
